@@ -1,0 +1,7 @@
+# Copyright (c) Nanopower Semiconductor AS
+# SPDX-License-Identifier: Apache-2.0
+#
+# Devicetree vendor prefixes added by the npz2100 module.
+# Format: <prefix><TAB><vendor name>
+
+nanopower	Nanopower Semiconductor AS

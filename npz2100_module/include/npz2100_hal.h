@@ -5,7 +5,7 @@
  * The user must implement two callbacks and populate an npz2100_hal_t struct
  * before calling any API function.  Every I²C transaction is routed through
  * these callbacks, so porting to a new MCU requires only filling in those two
- * functions — nothing else in the driver changes.
+ * functions - nothing else in the driver changes.
  *
  * I²C efficiency note
  * -------------------
@@ -14,8 +14,8 @@
  * one START + one STOP per write, which is critical on a 100 kHz bus shared
  * with low-power sensors.
  *
- * @version 0.7
- * @date    2026-05-06
+ * @version 0.8
+ * @date    2026-09-11
  * @author  Nanopower Semiconductor AS
  */
 
@@ -58,7 +58,7 @@ typedef enum {
  * buf[0] is always the target register address; buf[1..len-1] is the data.
  * The implementation must issue a single I²C transfer (START, addr+W, buf[0..len-1], STOP).
  *
- * @param[in] i2c_addr  7-bit I²C address of the nPZ2100 (typically 0x6F).
+ * @param[in] i2c_addr  7-bit I²C address of the nPZ2100 (factory default 0x3C).
  * @param[in] buf       Pointer to buffer: [reg_addr, data0, data1, ...].
  * @param[in] len       Total number of bytes in buf (register byte included).
  * @param[in] ctx       User context pointer passed through from npz2100_hal_t.
@@ -95,7 +95,7 @@ typedef npz2100_err_t (*npz2100_i2c_read_fn)(uint8_t  i2c_addr,
  * ---------------------------------------------------------------------- */
 
 /**
- * @brief HAL descriptor — populate once and pass to every API call.
+ * @brief HAL descriptor - populate once and pass to every API call.
  *
  * Example (bare-metal pseudocode):
  * @code
@@ -115,7 +115,7 @@ typedef struct {
 } npz2100_hal_t;
 
 /** Default I²C address (verify with hardware strapping). */
-#define NPZ2100_I2C_ADDR_DEFAULT  (0x6Fu)
+#define NPZ2100_I2C_ADDR_DEFAULT  (0x3Cu)
 
 /* -------------------------------------------------------------------------
  * Low-level primitives (used internally; exposed for advanced users)
@@ -151,7 +151,7 @@ npz2100_err_t npz2100_reg_read(const npz2100_hal_t *hal,
  * @brief Burst-write consecutive registers in a single I²C transaction.
  *
  * Writes @p len bytes from @p data starting at @p start_reg.
- * Uses one START/STOP pair regardless of length — maximally bus-efficient.
+ * Uses one START/STOP pair regardless of length - maximally bus-efficient.
  *
  * @param[in] hal       Pointer to initialised HAL descriptor.
  * @param[in] start_reg First register address.

@@ -12,6 +12,7 @@
 #   - Adds  dts/bindings/      to the devicetree binding search path.
 #   - Adds  include/           to the compiler include search path.
 #   - Adds  Kconfig             to the top-level Kconfig source chain.
+#   - Adds  boards/shields/     to the shield search path (--shield npz2100).
 
 name: npz2100
 
@@ -22,3 +23,4 @@ build:
   # Additional source roots exposed to the build system.
   settings:
     dts_root: .       # dts/bindings/ beneath this root is searched for .yaml.
+    board_root: .     # boards/shields/ beneath this root is searched for shields.

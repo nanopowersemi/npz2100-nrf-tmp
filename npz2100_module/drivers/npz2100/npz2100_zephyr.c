@@ -5,18 +5,18 @@
  * drivers/npz2100/npz2100_zephyr.c
  * ----------------------------------
  * Zephyr device-model wrapper for the nPZ2100 power-saving IC.
- * Target: nRF5x / NCS 3.3.4.
+ * Target: nRF52833 / NCS 3.0.2.
  *
  * Power architecture
  * ------------------
- * The nPZ2100 controls the nRF5x host power switch (SW_HP).  When the
- * nPZ2100 enters idle mode it cuts power to the nRF5x completely.
+ * The nPZ2100 controls the nRF52833 host power switch (SW_HP).  When the
+ * nPZ2100 enters idle mode it cuts power to the nRF52833 completely.
  * There is no always-on interrupt line between the two chips.
  *
- * Every nRF5x boot is a fresh start caused by the nPZ2100 re-enabling
+ * Every nRF52833 boot is a fresh start caused by the nPZ2100 re-enabling
  * SW_HP.  The Zephyr device init (npz2100_init) runs at POST_KERNEL, before
  * main().  It sets up the HAL, probes the device, and seeds the shadow with
- * defaults.  It does NOT read back registers or apply a regmap — those are
+ * defaults.  It does NOT read back registers or apply a regmap - those are
  * application responsibilities that depend on the wake reason.
  *
  * Required application boot sequence (every boot, before application logic):
@@ -26,12 +26,12 @@
  *   npz2100_apply_regmap(dev, map, len); // write only changed registers
  *   ... handle reason, optionally modify shadow ...
  *   npz2100_shadow_flush(dev);           // push runtime changes
- *   npz2100_enter_idle(dev);             // nPZ2100 cuts nRF5x power
+ *   npz2100_enter_idle(dev);             // nPZ2100 cuts nRF52833 power
  *
  * Portability boundary
  * --------------------
  * This is the ONLY source file that includes Zephyr headers.
- * npz2100.c and npz2100_mid.c are strictly platform-agnostic.
+ * npz2100.c and npz2100_lib.c are strictly platform-agnostic.
  *
  * Name collision resolution
  * -------------------------
@@ -50,8 +50,8 @@
 #include <zephyr/sys/util.h>
 #include <errno.h>
 
-/* Platform-agnostic headers — no Zephyr dependencies inside these. */
-#include "npz2100_mid.h"
+/* Platform-agnostic headers - no Zephyr dependencies inside these. */
+#include "npz2100_lib.h"
 #include "drivers/npz2100.h"
 
 LOG_MODULE_REGISTER(npz2100, CONFIG_NPZ2100_LOG_LEVEL);
@@ -78,7 +78,7 @@ static int err_to_zephyr(npz2100_err_t e)
  * ======================================================================= */
 
 struct npz2100_data {
-	/** Platform-agnostic HAL descriptor — populated at init, immutable after. */
+	/** Platform-agnostic HAL descriptor - populated at init, immutable after. */
 	npz2100_hal_t    hal;
 
 	/** Shadow of the nPZ2100 register state.
@@ -104,14 +104,14 @@ struct npz2100_config {
  *
  * These two functions are the only coupling point between the Zephyr I²C
  * subsystem and the platform-agnostic npz2100 core.  They are registered
- * in npz2100_hal_t.write / .read and called by npz2100.c / npz2100_mid.c.
+ * in npz2100_hal_t.write / .read and called by npz2100.c / npz2100_lib.c.
  *
  * ctx carries a const pointer to the i2c_dt_spec from npz2100_config.
  * The spec is immutable after init so no locking is needed here.
  * ======================================================================= */
 
 /**
- * @brief HAL write — single I²C transaction: [reg_addr, data...].
+ * @brief HAL write - single I²C transaction: [reg_addr, data...].
  *
  * buf[0] is the register address prepended by the core driver.
  * buf[1..len-1] is the data payload.
@@ -135,7 +135,7 @@ static npz2100_err_t zephyr_i2c_write(uint8_t        i2c_addr,
 }
 
 /**
- * @brief HAL read — write register pointer, then read N bytes.
+ * @brief HAL read - write register pointer, then read N bytes.
  *
  * Issues: START addr+W, reg, rSTART addr+R, buf[0..len-1], STOP.
  */
@@ -162,7 +162,7 @@ static npz2100_err_t zephyr_i2c_read(uint8_t  i2c_addr,
  * ======================================================================= */
 
 /**
- * @brief nPZ2100 driver init — runs at POST_KERNEL, before main().
+ * @brief nPZ2100 driver init - runs at POST_KERNEL, before main().
  *
  * Responsibilities:
  *   1. Verify the I²C bus is ready.
@@ -193,7 +193,7 @@ static int npz2100_init(const struct device *dev)
 	}
 
 	/* 2. Populate HAL.
-	 *    ctx points to cfg->i2c — immutable, no ownership concern. */
+	 *    ctx points to cfg->i2c - immutable, no ownership concern. */
 	data->hal.write    = zephyr_i2c_write;
 	data->hal.read     = zephyr_i2c_read;
 	data->hal.i2c_addr = cfg->i2c.addr;
@@ -208,7 +208,7 @@ static int npz2100_init(const struct device *dev)
 		return ret;
 	}
 
-	/* 4. Probe — confirm ID register = 0x74. */
+	/* 4. Probe - confirm ID register = 0x74. */
 	ret = err_to_zephyr(npz2100_probe_ll(&data->hal));
 	if (ret != 0) {
 		LOG_ERR("nPZ2100 not found on %s @ 0x%02X (err %d)",
@@ -280,9 +280,9 @@ int npz2100_boot_status(const struct device   *dev,
 		reason->nak[i] = (bool)(sta3 & BIT(i));
 	}
 
-	/* Log all status fields — identical output to STM32 port. */
+	/* Log all status fields - identical output to STM32 port. */
 
-	/* Reset source — always log so every boot shows why it started. */
+	/* Reset source - always log so every boot shows why it started. */
 	static const char * const rst_names[] = {
 		"Power-on reset", "External NRST pin",
 		"I2C command",    "Brown-out reset"
@@ -315,7 +315,7 @@ int npz2100_boot_status(const struct device   *dev,
 	if (reason->log_full)  { LOG_INF("  Wake: SRAM log area full"); }
 	if (reason->pa_active) { LOG_INF("  Wake: power-aware mode active"); }
 
-	/* NAK flags — peripheral did not respond during autonomous polling. */
+	/* NAK flags - peripheral did not respond during autonomous polling. */
 	for (int i = 0; i < 6; i++) {
 		if (reason->nak[i]) {
 			LOG_INF("  NAK:  peripheral %d did not acknowledge I2C", i + 1);
@@ -329,6 +329,7 @@ int npz2100_boot_status(const struct device   *dev,
 
 int npz2100_readback(const struct device *dev)
 {
+#if NPZ2100_SHADOW_ENABLE
 	struct npz2100_data *data = dev->data;
 	int ret;
 
@@ -343,6 +344,11 @@ int npz2100_readback(const struct device *dev)
 		LOG_ERR("readback failed: %d", ret);
 	}
 	return ret;
+#else
+	ARG_UNUSED(dev);
+	LOG_DBG("readback: shadow disabled (NPZ2100_SHADOW_ENABLE=0) - skipped");
+	return 0;
+#endif
 }
 
 /* ---- apply_regmap ----------------------------------------------------- */
@@ -366,16 +372,21 @@ int npz2100_apply_regmap(const struct device *dev,
 
 	k_mutex_lock(&data->lock, K_FOREVER);
 
+	#if NPZ2100_SHADOW_ENABLE
 	uint8_t ndiff = npz2100_map_diff_count(&data->shadow, map, map_len);
+	#else
+	uint8_t ndiff = 0u; /* shadow disabled - all registers will be written */
+	#endif
 
 	LOG_DBG("apply_regmap: %u register(s) differ from shadow", ndiff);
 
+	#if NPZ2100_SHADOW_ENABLE
 	if (ndiff == 0u) {
-		/* Device already matches — skip all I²C writes. */
 		k_mutex_unlock(&data->lock);
 		LOG_INF("apply_regmap: device in sync, nothing written");
 		return 0;
 	}
+	#endif
 
 	ret = err_to_zephyr(
 		npz2100_map_apply(&data->hal, &data->shadow, map, map_len));
@@ -397,7 +408,7 @@ npz2100_config_t *npz2100_get_shadow(const struct device *dev)
 	if (dev == NULL) {
 		return NULL;
 	}
-	/* No lock — caller must coordinate externally when modifying fields.
+	/* No lock - caller must coordinate externally when modifying fields.
 	 * Use npz2100_shadow_flush() to push changes under the driver lock. */
 	return &((struct npz2100_data *)dev->data)->shadow;
 }
@@ -407,15 +418,14 @@ npz2100_config_t *npz2100_get_shadow(const struct device *dev)
 int npz2100_shadow_flush(const struct device *dev)
 {
 	struct npz2100_data *data = dev->data;
+
+#if !NPZ2100_SHADOW_ENABLE
+	ARG_UNUSED(data);
+	LOG_DBG("shadow_flush: shadow disabled (NPZ2100_SHADOW_ENABLE=0) - no-op");
+	return 0;
+#else
 	int ret = 0;
 
-	/*
-	 * Walk every writable non-banked register and every peripheral bank,
-	 * writing via shadow_write_reg() which diffs before each write.
-	 * Consecutive runs of dirty registers could be burst-written for
-	 * extra efficiency, but the diff check already skips unchanged ones
-	 * so the worst case is one I²C transaction per changed register.
-	 */
 	struct { uint8_t addr; uint8_t *field; } regs[] = {
 		{ NPZ2100_REG_IOCFG1,    &data->shadow.iocfg1     },
 		{ NPZ2100_REG_IOCFG2,    &data->shadow.iocfg2     },
@@ -465,7 +475,6 @@ int npz2100_shadow_flush(const struct device *dev)
 						 *regs[i].field));
 	}
 
-	/* Peripheral banks 0–5. */
 	for (uint8_t slot = 0u;
 	     slot <= NPZ2100_P_BANK_MAX && ret == 0;
 	     slot++) {
@@ -480,9 +489,9 @@ int npz2100_shadow_flush(const struct device *dev)
 		LOG_ERR("shadow_flush failed: %d", ret);
 	}
 	return ret;
+#endif /* NPZ2100_SHADOW_ENABLE */
 }
 
-/* ---- SRAM ------------------------------------------------------------- */
 
 int npz2100_sram_write(const struct device *dev,
 		        uint8_t              sram_addr,
@@ -538,13 +547,13 @@ int npz2100_enter_idle(const struct device *dev)
 	int ret;
 
 	k_mutex_lock(&data->lock, K_FOREVER);
-	LOG_INF("Entering idle — nRF5x power will be cut");
+	LOG_INF("Entering idle - nRF52833 power will be cut");
 	ret = err_to_zephyr(npz2100_enter_idle_ll(&data->hal));
 	k_mutex_unlock(&data->lock);
 
 	/*
 	 * If the I²C write succeeded, the nPZ2100 will cut power to the
-	 * nRF5x within microseconds.  Execution will not reach here
+	 * nRF52833 within microseconds.  Execution will not reach here
 	 * in normal operation.
 	 *
 	 * If the write failed (ret != 0), return the error so the caller

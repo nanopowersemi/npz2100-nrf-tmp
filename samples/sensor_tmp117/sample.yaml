@@ -1,0 +1,16 @@
+# Copyright (c) Nanopower Semiconductor AS
+# SPDX-License-Identifier: Apache-2.0
+
+sample:
+  name: nPZ2100 TMP117 sensor sample
+  description: Reference application for the nPZ2100 driver
+tests:
+  sample.npz2100.sensor_tmp117:
+    build_only: true
+    platform_allow:
+      - nrf52dk/nrf52832
+      - nrf52833dk/nrf52833
+      - nrf52840dk/nrf52840
+    integration_platforms:
+      - nrf52833dk/nrf52833
+    tags: npz2100

@@ -1,0 +1,38 @@
+/*
+ * Copyright (c) Nanopower Semiconductor AS
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * npz2100.overlay
+ * ---------------
+ * Generic devicetree overlay for the nPZero (nPZ2100) shield.
+ *
+ * The nPZ2100 is attached to the board's Arduino-header I²C bus
+ * (arduino_i2c). On the nRF52 DK, nRF52833 DK and nRF52840 DK this is
+ * i2c0 on SDA = P0.26, SCL = P0.27.
+ *
+ * Power architecture
+ * ------------------
+ * The nPZ2100 controls the host power supply via SW_HP. When idle, the
+ * nPZ2100 cuts power to the host completely. There is NO interrupt line
+ * from the nPZ2100 to the host; every host boot is caused by the nPZ2100
+ * re-enabling SW_HP.
+ *
+ * Board-specific additions (pin control, UART, ...) live in
+ * boards/<board>.overlay next to this file and are applied automatically.
+ *
+ * I²C is fixed at 100 kHz to match the nPZ2100 specification.
+ * The nPZ2100 factory I²C address is 0x3C.
+ */
+
+&arduino_i2c {
+	status = "okay";
+
+	/* 100 kHz — nPZ2100 maximum rated I²C frequency. */
+	clock-frequency = <I2C_BITRATE_STANDARD>;
+
+	npz2100: npz2100@3c {
+		compatible = "nanopower,npz2100";
+		reg = <0x3c>;        /* 7-bit I²C address — adjust if strapped differently */
+		label = "NPZ2100";
+	};
+};

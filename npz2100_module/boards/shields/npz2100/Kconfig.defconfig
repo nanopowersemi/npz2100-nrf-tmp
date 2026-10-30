@@ -1,0 +1,14 @@
+# Copyright (c) Nanopower Semiconductor AS
+# SPDX-License-Identifier: Apache-2.0
+#
+# Kconfig defaults applied when the npz2100 shield is selected.
+# Applications can still override any of these in prj.conf.
+
+if SHIELD_NPZ2100
+
+# The nPZ2100 is an I²C device, so the I²C subsystem must be enabled.
+# CONFIG_NPZ2100 then defaults to y through DT_HAS_NANOPOWER_NPZ2100_ENABLED.
+config I2C
+	default y
+
+endif # SHIELD_NPZ2100
