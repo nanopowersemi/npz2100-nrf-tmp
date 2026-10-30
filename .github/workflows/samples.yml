@@ -1,0 +1,111 @@
+# Builds every sample for every board the npz2100 shield supports (twister,
+# from sample.yaml), then flashes and tests each sample that has a
+# ci/test.py on the bench: an nRF52 DK wired to an nPZ2100, powered and
+# reset through an Analog Discovery 3.
+#
+# Runs on the self-hosted Linux runner the bench is attached to. The NCS
+# environment is set up from a Python venv and zephyr-env.sh, as in the
+# github-runner-test workflow. Every setting below has a default; override
+# it with a repository variable (Settings > Secrets and variables > Actions
+# > Variables) if the runner differs:
+#   NCS_DIR             NCS workspace on the runner (default /home/ovrebekk/ncs/v3.3.0)
+#   NCS_VENV            Python venv with west (default /home/ovrebekk/ncs/venv)
+#   NPZ_CI_BOARD        board target on the bench (default nrf52dk/nrf52832)
+#   NPZ_CI_PORT         serial port with the nRF log (default /dev/ttyACM0), or
+#                       ad3:4 to receive it on AD3 DIO4 (nRF powered from SW_HP)
+#   NPZ_CI_DEV_ID       J-Link serial number (optional, if more than one is attached)
+#   NPZ_CI_AD3_SN       AD3 serial number (optional, if more than one is attached)
+#   NPZ_CI_AD3_VOLTAGE  AD3 supply voltage in V (default 3.3)
+
+name: Samples
+
+on:
+  push:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  NCS_DIR: ${{ vars.NCS_DIR || '/home/ovrebekk/ncs/v3.3.0' }}
+  NCS_VENV: ${{ vars.NCS_VENV || '/home/ovrebekk/ncs/venv' }}
+  NPZ_CI_BOARD: ${{ vars.NPZ_CI_BOARD || 'nrf52dk/nrf52832' }}
+  NPZ_CI_PORT: ${{ vars.NPZ_CI_PORT || '/dev/ttyACM0' }}
+  NPZ_CI_DEV_ID: ${{ vars.NPZ_CI_DEV_ID }}
+  NPZ_CI_AD3: "1"
+  NPZ_CI_AD3_SN: ${{ vars.NPZ_CI_AD3_SN }}
+  NPZ_CI_AD3_VOLTAGE: ${{ vars.NPZ_CI_AD3_VOLTAGE || '3.3' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  dk_test:
+    runs-on: [self-hosted, linux]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup NCS environment
+        run: |
+          # Activate the Python virtual environment
+          source "$NCS_VENV/bin/activate"
+
+          # Initialize Zephyr/NCS environment
+          source "$NCS_DIR/zephyr/zephyr-env.sh"
+
+          # Make the environment available to subsequent steps
+          echo "PATH=$PATH" >> "$GITHUB_ENV"
+          echo "VIRTUAL_ENV=$VIRTUAL_ENV" >> "$GITHUB_ENV"
+          echo "ZEPHYR_BASE=$ZEPHYR_BASE" >> "$GITHUB_ENV"
+
+          python --version
+          west --version
+          echo "ZEPHYR_BASE=$ZEPHYR_BASE"
+
+      - name: Install test requirements
+        run: python -m pip install -r scripts/ci/requirements.txt
+
+      - name: Build all samples (twister)
+        run: |
+          west twister -T samples -O twister-out \
+            -p nrf52dk/nrf52832 \
+            -p nrf52833dk/nrf52833 \
+            -p nrf52840dk/nrf52840
+
+      - name: Upload twister report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: twister-report
+          path: twister-out/twister*.xml
+
+      - name: Power on bench (AD3)
+        id: bench
+        run: python -u scripts/ci/ad3_open.py
+
+      # One step per sample with a ci/test.py, so a failing sample shows by
+      # name. Each runs as long as the bench came up, even if an earlier
+      # sample failed, since every sample starts from a clean power cycle.
+      # Add a step here when a sample gets a ci/test.py.
+      - name: Test global_counter_alarm
+        if: ${{ !cancelled() && steps.bench.outcome == 'success' }}
+        run: python -u scripts/ci/run_samples.py --sample global_counter_alarm
+
+      - name: Test sensor_tmp117
+        if: ${{ !cancelled() && steps.bench.outcome == 'success' }}
+        run: python -u scripts/ci/run_samples.py --sample sensor_tmp117
+
+      - name: Test watchdog
+        if: ${{ !cancelled() && steps.bench.outcome == 'success' }}
+        run: python -u scripts/ci/run_samples.py --sample watchdog
+
+      - name: Erase nRF
+        if: always()
+        run: python -u scripts/ci/erase.py
+
+      - name: Power off bench (AD3)
+        if: always()
+        run: python -u scripts/ci/ad3_close.py
