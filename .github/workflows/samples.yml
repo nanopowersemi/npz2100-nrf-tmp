@@ -16,6 +16,8 @@
 #   NPZ_CI_DEV_ID       J-Link serial number (optional, if more than one is attached)
 #   NPZ_CI_AD3_SN       AD3 serial number (optional, if more than one is attached)
 #   NPZ_CI_AD3_VOLTAGE  AD3 supply voltage in V (default 3.3)
+#   NPZ_CI_AD3_I2C      AD3 DIO pins SDA,SCL to sniff the I2C bus on during the
+#                       tests (default 6,7)
 
 name: Samples
 
@@ -35,6 +37,7 @@ env:
   NPZ_CI_AD3: "1"
   NPZ_CI_AD3_SN: ${{ vars.NPZ_CI_AD3_SN }}
   NPZ_CI_AD3_VOLTAGE: ${{ vars.NPZ_CI_AD3_VOLTAGE || '3.3' }}
+  NPZ_CI_AD3_I2C: ${{ vars.NPZ_CI_AD3_I2C || '6,7' }}
 
 defaults:
   run:
