@@ -11,6 +11,7 @@ Usage (from an NCS environment, e.g. `nrfutil sdk-manager toolchain launch
     python scripts/ci/run_samples.py --board nrf52dk/nrf52832 --port /dev/ttyACM0
     python scripts/ci/run_samples.py --board ... --port ... --ad3
     python scripts/ci/run_samples.py --board ... --port ad3:4 --ad3
+    python scripts/ci/run_samples.py --board ... --port ad3:4 --ad3 --i2c
     python scripts/ci/run_samples.py --board ... --port ... --sample global_counter_alarm
     python scripts/ci/run_samples.py --board ... --build-only
 
@@ -18,6 +19,11 @@ With --ad3, each sample is tested from a clean start: the bench is
 power-cycled through the Analog Discovery 3 supply with the nRF held in
 reset (so the nPZ2100 gets a power-on reset and stays in standby), the nRF
 is erased, and only then is the sample flashed.
+
+With --i2c (SDA on AD3 DIO6, SCL on DIO7; --i2c SDA,SCL for others), the AD3
+logic analyzer also sniffs the bus during the capture: every transaction
+is printed as [I2C] next to the log lines, decoded as a register read or
+write where it can be, followed by a count of accesses per register.
 
 Build coverage across all supported boards comes from sample.yaml and
 twister instead (`west twister -T samples --integration`).
@@ -29,7 +35,7 @@ import os
 import sys
 
 from ci_utils import (REPO_ROOT, SAMPLES_DIR, Log, ad3_clean_erase, build, common_checks,
-                      flash, open_ad3, open_capture)
+                      flash, open_ad3, open_capture, parse_i2c_pins)
 
 
 def discover(names=None):
@@ -69,12 +75,12 @@ def run_sample(test_path, args):
     # One AD3 session from the power cycle to the end of the capture, and
     # no rebuild before the flash: the nRF is only powered while the
     # nPZ2100 is in standby, so the flash follows the erase without a gap.
-    ad3 = open_ad3() if args.ad3 else None
+    ad3 = open_ad3() if args.ad3 or args.i2c else None
     try:
-        if ad3:
+        if args.ad3:
             ad3_clean_erase(args.dev_id, ad3=ad3)
 
-        capture = open_capture(args.port, ad3=ad3)
+        capture = open_capture(args.port, ad3=ad3, i2c=args.i2c)
         try:
             flash(build_dir, args.dev_id, no_rebuild=True)
             print(f"Capturing log for {test.CAPTURE_S} s...", flush=True)
@@ -85,7 +91,7 @@ def run_sample(test_path, args):
         if ad3:
             ad3.close()  # without a device reset, so the supply stays on
 
-    log = Log(capture.lines)
+    log = Log(capture.lines, getattr(capture, "i2c", ()))
     common_checks(log)
     test.check(log)
     return log.failures
@@ -103,6 +109,9 @@ def parse_args(argv=None):
                    help="only run this sample (repeatable); default: all with ci/test.py")
     p.add_argument("--ad3", action="store_true", default=bool(os.environ.get("NPZ_CI_AD3")),
                    help="erase and power-cycle the bench with the AD3 before each sample (env NPZ_CI_AD3)")
+    p.add_argument("--i2c", nargs="?", const="6,7", default=os.environ.get("NPZ_CI_AD3_I2C"),
+                   metavar="SDA,SCL",
+                   help="also sniff the I2C bus on these AD3 DIO pins (default 6,7) (env NPZ_CI_AD3_I2C)")
     p.add_argument("--verbose", action="store_true",
                    help="show the full build output (default: only on failure)")
     p.add_argument("--build-only", action="store_true", help="build, do not flash or test")
@@ -113,6 +122,11 @@ def parse_args(argv=None):
         p.error("--board (or NPZ_CI_BOARD) is required")
     if not args.build_only and not args.port:
         p.error("--port (or NPZ_CI_PORT) is required unless --build-only")
+    if args.i2c:
+        try:
+            args.i2c = parse_i2c_pins(args.i2c)
+        except ValueError as e:
+            p.error(f"--i2c: {e}")
     return args
 
 

@@ -147,10 +147,13 @@ class SerialCapture:
     keeps receiving lines from later wake cycles too.
     """
 
-    def __init__(self, port, baudrate=BAUDRATE):
+    spy = None  # an Ad3LogicCapture sniffing I2C next to the serial log
+
+    def __init__(self, port, baudrate=BAUDRATE, spy=None):
         import serial  # pyserial; imported here so builds work without it
 
         self.lines = []
+        self.spy = spy
         self._stop = threading.Event()
         self._ser = serial.Serial(port=port, baudrate=baudrate, timeout=0.1)
         self._thread = threading.Thread(target=self._read, daemon=True)
@@ -164,6 +167,11 @@ class SerialCapture:
                 _echo(line)
                 self.lines.append(line)
 
+    @property
+    def i2c(self):
+        """The I2C transactions sniffed during the capture, if any."""
+        return self.spy.i2c if self.spy else []
+
     def wait(self, seconds):
         time.sleep(seconds)
 
@@ -171,6 +179,8 @@ class SerialCapture:
         self._stop.set()
         self._thread.join()
         self._ser.close()
+        if self.spy:
+            self.spy.close()
 
 
 class Ad3UartCapture(SerialCapture):
@@ -213,21 +223,64 @@ class Ad3UartCapture(SerialCapture):
             self._ad3.close()  # without a device reset, so the supply stays on
 
 
-def open_capture(port, baudrate=BAUDRATE, ad3=None):
+def parse_i2c_pins(text):
+    """'SDA,SCL' AD3 DIO pins (e.g. '6,7') -> (sda, scl). DIO0-2 are driven
+    as outputs by the AD3 handler and the reset DIO is an output too, so
+    they cannot be used."""
+    import os
+
+    try:
+        sda, scl = (int(p.strip().lower().removeprefix("dio")) for p in text.split(","))
+    except ValueError:
+        raise ValueError(f"expected SDA,SCL AD3 DIO pins, e.g. 6,7, not '{text}'") from None
+    reset_dio = int(os.environ.get("NPZ_CI_AD3_RESET_DIO") or 5)
+    for pin in (sda, scl):
+        if not 0 <= pin <= 15 or pin in (0, 1, 2, reset_dio):
+            raise ValueError(f"AD3 DIO{pin} cannot sniff I2C (DIO0-2 and DIO{reset_dio} "
+                             f"are outputs on this bench)")
+    if sda == scl:
+        raise ValueError("SDA and SCL must be different AD3 DIO pins")
+    return sda, scl
+
+
+def open_capture(port, baudrate=BAUDRATE, ad3=None, i2c=None):
     """Opens the log capture for port: a serial port, or ad3:<DIO pin>
-    (e.g. ad3:4) for the AD3 UART receiver, on ad3 if one is open."""
+    (e.g. ad3:4) for the AD3 UART receiver, on ad3 if one is open.
+
+    With i2c=(SDA pin, SCL pin), the I2C bus is sniffed on those AD3 DIO
+    pins too (ad3 must be open). The AD3 logic analyzer then records the
+    bus, and the UART pin with it when the log comes from the AD3, and the
+    capture's i2c lists the transactions."""
+    uart_pin = None
     if port.lower().startswith("ad3:"):
-        pin = int(port[4:].lower().removeprefix("dio"))
-        print(f"Capturing the log on AD3 DIO{pin}", flush=True)
-        return Ad3UartCapture(pin, baudrate, ad3)
+        uart_pin = int(port[4:].lower().removeprefix("dio"))
+    if i2c:
+        from ad3_logic import Ad3LogicCapture, load_reg_names  # numpy, from dwfpy
+
+        spy = Ad3LogicCapture(ad3, *i2c, uart_pin=uart_pin, baudrate=baudrate,
+                              reg_names=load_reg_names(REPO_ROOT))
+        if uart_pin is not None:
+            return spy
+        try:
+            return SerialCapture(port, baudrate, spy=spy)
+        except Exception:
+            spy.close()
+            raise
+    if uart_pin is not None:
+        print(f"Capturing the log on AD3 DIO{uart_pin}", flush=True)
+        return Ad3UartCapture(uart_pin, baudrate, ad3)
     return SerialCapture(port, baudrate)
 
 
 class Log:
-    """Captured log with simple pattern checks that collect failures."""
+    """Captured log with simple pattern checks that collect failures.
 
-    def __init__(self, lines):
+    i2c holds the sniffed I2C transactions (ad3_logic.I2cTransaction) when
+    the run sniffs the bus, so a test can check register accesses too."""
+
+    def __init__(self, lines, i2c=()):
         self.lines = lines
+        self.i2c = list(i2c)
         self.failures = []
 
     def find(self, pattern):

@@ -2,7 +2,8 @@
 
 The AD3 positive supply (V+) powers the bench, and DIO0-2 are outputs (not
 routed to the nRF). DIO4 receives the nRF UART TX, and DIO5 is wired to the
-nRF reset (P0.21). Settings made here stay applied after the script exits
+nRF reset (P0.21). DIO6 and DIO7 are inputs on the nPZ2100 I2C SDA and SCL,
+for sniffing the bus (run_samples.py --i2c). Settings made here stay applied after the script exits
 as long as close() is called without a device reset, so separate steps can
 switch the supply on and off.
 

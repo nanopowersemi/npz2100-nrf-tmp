@@ -463,6 +463,25 @@ When the nRF is powered from the nPZ2100 SW_HP instead of USB, there is no
 J-Link CDC port: flash with an external J-Link and use `--port ad3:4` (or
 set `NPZ_CI_PORT` to `ad3:4`) to receive the nRF UART TX on AD3 DIO4.
 
+To see the I2C traffic during a test, add `--i2c` (or set `NPZ_CI_AD3_I2C`
+to `6,7`). On the bench, SDA is wired to AD3 DIO6 and SCL to DIO7; for other
+pins, give them as `--i2c SDA,SCL` (not DIO0-2, which the AD3 drives, nor
+the reset DIO5). The AD3 logic
+analyzer then records the bus, plus the UART pin when the log comes from
+`ad3:<pin>`, and decodes both, so each transaction is printed in order with
+the log lines:
+
+```
+[UART] nPZ2100 global counter alarm sample boot
+[I2C ]   1.204310 s  read  ID (0x01) -> 74
+[I2C ]   1.204820 s  write ADCCFG (0x40) = 05
+```
+
+At the end of the capture comes a count of reads and writes per register,
+and a test can look at the transactions in `log.i2c`. The default sample
+rate of 2 MS/s suits 100 kHz I2C; lost samples are reported, and the rate
+can be set with `NPZ_CI_AD3_LA_RATE`.
+
 ---
 
 ## Troubleshooting
