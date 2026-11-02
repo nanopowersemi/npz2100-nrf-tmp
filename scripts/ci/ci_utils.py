@@ -14,6 +14,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SAMPLES_DIR = REPO_ROOT / "samples"
+# Kconfig the bench builds add on top of each sample's prj.conf.
+CI_CONF = Path(__file__).resolve().parent / "ci.conf"
 BAUDRATE = 115200
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -49,9 +51,10 @@ def run(command, cwd=REPO_ROOT, quiet=False):
 
 
 def build(sample_dir, board, build_dir, quiet=False):
-    """Builds a sample. With quiet, only the memory usage table is shown,
-    unless the build fails."""
-    out = run(["west", "build", "-p", "always", "-b", board, "-d", build_dir, sample_dir],
+    """Builds a sample with scripts/ci/ci.conf added. With quiet, only the
+    memory usage table is shown, unless the build fails."""
+    out = run(["west", "build", "-p", "always", "-b", board, "-d", build_dir, sample_dir,
+               "--", f"-DEXTRA_CONF_FILE={CI_CONF.as_posix()}"],
               quiet=quiet)
     if quiet:
         lines = _ANSI.sub("", out).splitlines()

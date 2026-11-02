@@ -430,6 +430,11 @@ the nRF, releases reset, flashes the sample and captures the log for the time it
 Then it checks the log against the test's patterns, plus failure strings
 every sample shares (`not ready`, `failed: -<errno>`).
 
+The bench builds add `scripts/ci/ci.conf` to each sample's `prj.conf`. It
+sets `CONFIG_LOG_MODE_IMMEDIATE`, so log lines leave the UART when they are
+logged and line up with the sniffed I2C traffic; twister builds are not
+affected.
+
 To run it by hand from an NCS environment, at the repository root:
 
 ```
