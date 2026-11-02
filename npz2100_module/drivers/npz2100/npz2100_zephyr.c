@@ -345,6 +345,7 @@ int npz2100_readback(const struct device *dev)
 	}
 	return ret;
 #else
+	/* The regmap is diffed against reset defaults - nothing to read. */
 	ARG_UNUSED(dev);
 	LOG_DBG("readback: shadow disabled (NPZ2100_SHADOW_ENABLE=0) - skipped");
 	return 0;
@@ -358,6 +359,7 @@ int npz2100_apply_regmap(const struct device *dev,
 			  size_t               map_len)
 {
 	struct npz2100_data *data = dev->data;
+	uint8_t written = 0u;
 	int ret;
 
 	if (map == NULL || map_len == 0u) {
@@ -372,32 +374,53 @@ int npz2100_apply_regmap(const struct device *dev,
 
 	k_mutex_lock(&data->lock, K_FOREVER);
 
-	#if NPZ2100_SHADOW_ENABLE
-	uint8_t ndiff = npz2100_map_diff_count(&data->shadow, map, map_len);
-	#else
-	uint8_t ndiff = 0u; /* shadow disabled - all registers will be written */
-	#endif
-
-	LOG_DBG("apply_regmap: %u register(s) differ from shadow", ndiff);
-
-	#if NPZ2100_SHADOW_ENABLE
-	if (ndiff == 0u) {
-		k_mutex_unlock(&data->lock);
-		LOG_INF("apply_regmap: device in sync, nothing written");
-		return 0;
-	}
-	#endif
-
 	ret = err_to_zephyr(
-		npz2100_map_apply(&data->hal, &data->shadow, map, map_len));
+		npz2100_map_apply(&data->hal, &data->shadow, map, map_len,
+				  &written));
 
 	k_mutex_unlock(&data->lock);
 
 	if (ret == 0) {
-		LOG_INF("apply_regmap: %u register(s) written", ndiff);
+		LOG_INF("apply_regmap: %u register(s) written", written);
 	} else {
 		LOG_ERR("apply_regmap failed: %d", ret);
 	}
+	return ret;
+}
+
+/* ---- read_regs / write_regs ------------------------------------------- */
+
+int npz2100_read_regs(const struct device *dev,
+		      uint8_t              start_reg,
+		      uint8_t             *buf,
+		      size_t               len)
+{
+	struct npz2100_data *data = dev->data;
+	int ret;
+
+	k_mutex_lock(&data->lock, K_FOREVER);
+	ret = err_to_zephyr(
+		npz2100_regs_read_ll(&data->hal, &data->shadow,
+				     start_reg, buf, len));
+	k_mutex_unlock(&data->lock);
+
+	return ret;
+}
+
+int npz2100_write_regs(const struct device *dev,
+		       uint8_t              start_reg,
+		       const uint8_t       *buf,
+		       size_t               len)
+{
+	struct npz2100_data *data = dev->data;
+	int ret;
+
+	k_mutex_lock(&data->lock, K_FOREVER);
+	ret = err_to_zephyr(
+		npz2100_regs_write_ll(&data->hal, &data->shadow,
+				      start_reg, buf, len));
+	k_mutex_unlock(&data->lock);
+
 	return ret;
 }
 
@@ -418,12 +441,6 @@ npz2100_config_t *npz2100_get_shadow(const struct device *dev)
 int npz2100_shadow_flush(const struct device *dev)
 {
 	struct npz2100_data *data = dev->data;
-
-#if !NPZ2100_SHADOW_ENABLE
-	ARG_UNUSED(data);
-	LOG_DBG("shadow_flush: shadow disabled (NPZ2100_SHADOW_ENABLE=0) - no-op");
-	return 0;
-#else
 	int ret = 0;
 
 	struct { uint8_t addr; uint8_t *field; } regs[] = {
@@ -489,7 +506,6 @@ int npz2100_shadow_flush(const struct device *dev)
 		LOG_ERR("shadow_flush failed: %d", ret);
 	}
 	return ret;
-#endif /* NPZ2100_SHADOW_ENABLE */
 }
 
 

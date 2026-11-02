@@ -154,6 +154,42 @@ int npz2100_apply_regmap(const struct device *dev,
                           size_t               map_len);
 
 /**
+ * @brief Read consecutive nPZ2100 registers in one I²C transaction.
+ *
+ * The values are also copied into the driver shadow.  Use this to read the
+ * few registers the application needs (e.g. the GCT block) without a full
+ * npz2100_readback().
+ *
+ * @param dev        Pointer to the nPZ2100 device.
+ * @param start_reg  First register address (below the SRAM window, 0x80).
+ * @param buf        Destination buffer.
+ * @param len        Number of registers to read.
+ * @return 0 on success, -EINVAL on bad range, -EIO on I²C error.
+ */
+int npz2100_read_regs(const struct device *dev,
+		      uint8_t              start_reg,
+		      uint8_t             *buf,
+		      size_t               len);
+
+/**
+ * @brief Write consecutive nPZ2100 registers in one I²C transaction.
+ *
+ * Always written, in address order, regardless of the shadow or the reset
+ * defaults; the shadow is updated to match.  Use this for runtime changes
+ * the regmap does not cover, e.g. setting the GCT counter and alarm.
+ *
+ * @param dev        Pointer to the nPZ2100 device.
+ * @param start_reg  First register address (below the SRAM window, 0x80).
+ * @param buf        Values to write.
+ * @param len        Number of registers to write.
+ * @return 0 on success, -EINVAL on bad range, -EIO on I²C error.
+ */
+int npz2100_write_regs(const struct device *dev,
+		       uint8_t              start_reg,
+		       const uint8_t       *buf,
+		       size_t               len);
+
+/**
  * @brief Return a pointer to the driver's internal configuration shadow.
  *
  * Use this with the typed lib helpers to build a modified configuration

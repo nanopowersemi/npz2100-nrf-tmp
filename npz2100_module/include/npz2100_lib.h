@@ -50,7 +50,7 @@
  *           0x00, 0x00, 0x00, 0x00, 0x00,
  *       // ... more segments ...
  *   };
- *   npz2100_map_apply(&hal, &shadow, regmap, sizeof(regmap));
+ *   npz2100_map_apply(&hal, &shadow, regmap, sizeof(regmap), NULL);
  * @endcode
  *
  * P_BANK (0x1F) is just another addressable register within this stream -
@@ -98,12 +98,17 @@
  *   minimising I2C bus traffic across repeated boot cycles.
  *
  * NPZ2100_SHADOW_ENABLE = 0
- *   Shadow tracking is disabled.  Every register in the regmap is written
- *   unconditionally on every call to npz2100_map_apply().
- *   npz2100_map_readback(), npz2100_map_diff_count(), and
- *   npz2100_shadow_write_reg() become no-ops and return NPZ2100_OK.
- *   npz2100_get_shadow() / NPZ2100_GetShadow() return NULL.
- *   NPZ2100_ShadowFlush() / npz2100_shadow_flush() become no-ops.
+ *   No readback.  npz2100_map_apply() diffs the regmap against the
+ *   registers' reset defaults instead of the device state, so a regmap
+ *   only costs I2C writes for the registers it changes from reset, and
+ *   nothing needs to be read on boot.  P_BANK is always written.
+ *   npz2100_map_diff_count() is not available.
+ *   Registers changed at runtime (e.g. the GCT block) must be read and
+ *   written explicitly with npz2100_regs_read_ll() / npz2100_regs_write_ll().
+ *
+ * In both modes the npz2100_config_t struct is where the typed helpers
+ * stage configuration, and every register read or write through this API
+ * updates it.
  *
  * To disable shadow tracking, define NPZ2100_SHADOW_ENABLE=0 in your
  * project preprocessor symbols before including any npz2100 header:
@@ -392,14 +397,17 @@ npz2100_err_t npz2100_config_init_defaults(npz2100_config_t *cfg);
 
 /**
  * @brief Apply a tool-generated register map to the device, writing only
- *        registers that differ from the current shadow.
+ *        registers that differ from the reference.
  *
  * Parses @p map as a concatenation of segments shaped
  * `[length][start_addr][data...]` (see file-level documentation above).
  * For each resulting register address / value pair:
- *   - Compare value against the corresponding shadow field.
- *   - If different: write to device, update shadow.
+ *   - Compare value against the reference: the shadow field when
+ *     NPZ2100_SHADOW_ENABLE=1, the register's reset default when
+ *     NPZ2100_SHADOW_ENABLE=0 (P_BANK is then always written).
+ *   - If different: write to device.
  *   - If identical: skip (zero I²C transactions for that register).
+ *   - Either way the shadow field is set to the value.
  *
  * P_BANK (0x1F) requires no special handling - it is written like any
  * other register in the stream, and subsequent banked addresses (0x20–0x2D)
@@ -411,6 +419,8 @@ npz2100_err_t npz2100_config_init_defaults(npz2100_config_t *cfg);
  * @param[in]     map       Byte-stream register map from the configuration tool.
  * @param[in]     map_len   Total length of @p map in bytes (use sizeof() for
  *                          compile-time arrays).
+ * @param[out]    written   Number of registers written to the device, or
+ *                          NULL if not needed.
  * @return NPZ2100_OK, or the first error encountered.
  *         NPZ2100_ERR_ARG if the stream is malformed (a segment's length
  *         field would read past the end of the buffer).
@@ -418,19 +428,16 @@ npz2100_err_t npz2100_config_init_defaults(npz2100_config_t *cfg);
 npz2100_err_t npz2100_map_apply(const npz2100_hal_t *hal,
                                  npz2100_config_t    *cfg,
                                  const uint8_t       *map,
-                                 size_t               map_len);
-
-/* npz2100_map_readback and npz2100_map_diff_count are only meaningful
- * when shadow tracking is enabled.  When NPZ2100_SHADOW_ENABLE=0 they
- * are not declared - calling them is a compile-time error, making it
- * obvious that they have no effect without the shadow. */
-#if NPZ2100_SHADOW_ENABLE
+                                 size_t               map_len,
+                                 uint8_t             *written);
 
 /**
  * @brief Read all device registers back and update the shadow.
  *
- * Only available when NPZ2100_SHADOW_ENABLE=1.
- * No-op / not declared when NPZ2100_SHADOW_ENABLE=0.
+ * Needed before npz2100_map_apply() when NPZ2100_SHADOW_ENABLE=1.  With
+ * NPZ2100_SHADOW_ENABLE=0 the diff reference is the reset defaults, so
+ * this is not needed; use npz2100_regs_read_ll() for the few registers
+ * the application actually has to read.
  *
  * @param[in]  hal  Pointer to initialised HAL descriptor.
  * @param[out] cfg  Shadow struct to populate.
@@ -440,10 +447,54 @@ npz2100_err_t npz2100_map_readback(const npz2100_hal_t *hal,
                                     npz2100_config_t    *cfg);
 
 /**
+ * @brief Burst-read consecutive registers and update the config struct.
+ *
+ * Reads @p len registers starting at @p start_reg in one I2C transaction.
+ * Banked addresses resolve against cfg->p_bank.  The range must lie below
+ * the SRAM window (0x80).
+ *
+ * @param[in]     hal        Pointer to initialised HAL descriptor.
+ * @param[in,out] cfg        Config struct to update, or NULL.
+ * @param[in]     start_reg  First register address.
+ * @param[out]    data       Destination buffer (@p len bytes).
+ * @param[in]     len        Number of registers to read.
+ * @return NPZ2100_OK, NPZ2100_ERR_ARG, or an I2C error.
+ */
+npz2100_err_t npz2100_regs_read_ll(const npz2100_hal_t *hal,
+                                    npz2100_config_t    *cfg,
+                                    uint8_t              start_reg,
+                                    uint8_t             *data,
+                                    size_t               len);
+
+/**
+ * @brief Burst-write consecutive registers and update the config struct.
+ *
+ * Writes @p len registers starting at @p start_reg in one I2C transaction,
+ * in address order, whatever their current or default value.  Use it for
+ * runtime changes the regmap does not cover, e.g. setting the GCT counter.
+ * The range must lie below the SRAM window (0x80).
+ *
+ * @param[in]     hal        Pointer to initialised HAL descriptor.
+ * @param[in,out] cfg        Config struct to update, or NULL.
+ * @param[in]     start_reg  First register address.
+ * @param[in]     data       Values to write (@p len bytes).
+ * @param[in]     len        Number of registers to write.
+ * @return NPZ2100_OK, NPZ2100_ERR_ARG, or an I2C error.
+ */
+npz2100_err_t npz2100_regs_write_ll(const npz2100_hal_t *hal,
+                                     npz2100_config_t    *cfg,
+                                     uint8_t              start_reg,
+                                     const uint8_t       *data,
+                                     size_t               len);
+
+/* npz2100_map_diff_count is only meaningful when shadow diffing is enabled.
+ * When NPZ2100_SHADOW_ENABLE=0 it is not declared. */
+#if NPZ2100_SHADOW_ENABLE
+
+/**
  * @brief Count registers that differ between the shadow and the regmap.
  *
  * Only available when NPZ2100_SHADOW_ENABLE=1.
- * Returns 0 unconditionally (no diff possible) when shadow is disabled.
  *
  * @param[in] cfg      Current shadow.
  * @param[in] map      Byte-stream register map to compare against.
@@ -472,11 +523,10 @@ npz2100_err_t npz2100_map_validate(const uint8_t *map, size_t map_len);
 /**
  * @brief Write a single register immediately and update the shadow.
  *
- * When NPZ2100_SHADOW_ENABLE=0, this function writes the register
- * directly without any shadow interaction.
+ * The write is never skipped, in either shadow mode.
  *
  * @param[in]     hal    Pointer to initialised HAL descriptor.
- * @param[in,out] cfg    Shadow to update (ignored when shadow disabled).
+ * @param[in,out] cfg    Shadow to update, or NULL.
  * @param[in]     addr   Register address.
  * @param[in]     value  Value to write.
  * @return NPZ2100_OK or an error code.
