@@ -8,7 +8,7 @@ the I2C transactions on one time base, so each register access shows up
 between the log lines it happened between.
 
 Environment:
-    NPZ_CI_AD3_LA_RATE    logic analyzer sample rate in Hz (default 2000000)
+    NPZ_CI_AD3_LA_RATE    logic analyzer sample rate in Hz (default 1000000)
 """
 
 import os
@@ -21,7 +21,9 @@ from pathlib import Path
 
 import numpy as np
 
-LA_RATE = float(os.environ.get("NPZ_CI_AD3_LA_RATE") or 2e6)
+# 1 MS/s gives ~8.7 samples per bit at 115200 baud and 10 per 100 kHz I2C
+# bit, enough for both decoders, at half the USB load of 2 MS/s.
+LA_RATE = float(os.environ.get("NPZ_CI_AD3_LA_RATE") or 1e6)
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 _REG_DEFINE = re.compile(r"#define\s+NPZ2100_REG_(\w+)\s+\((0x[0-9A-Fa-f]+)u?\)")
 
@@ -216,6 +218,8 @@ class Ad3LogicCapture:
         self.lines = []
         self.i2c = []
         self.lost = 0
+        self._lost_printed = 0
+        self._lost_print_t = 0.0
         self._sda, self._scl, self._uart_pin = sda, scl, uart_pin
         self._regs = reg_names or {}
         self._uart = UartDecoder(rate, baudrate) if uart_pin is not None else None
@@ -232,22 +236,34 @@ class Ad3LogicCapture:
         di.sample_format = 8 if max(pins) < 8 else 16
         di.sample_rate = rate
         self.rate = di.sample_rate  # the rate the divider actually gives
+        try:
+            # The largest device buffer gives the most slack between polls.
+            di.buffer_size = di.buffer_size_max
+        except Exception:
+            pass
+        buffer = di.buffer_size
         di.setup_trigger(source="none", position=min(int(self.rate * max_s), 2**31 - 1), prefill=0)
         di.configure(start=True)
 
         what = f"I2C on DIO{sda} (SDA) / DIO{scl} (SCL)"
         if uart_pin is not None:
             what = f"the log on DIO{uart_pin} and " + what
-        print(f"AD3 logic analyzer: capturing {what} at {self.rate / 1e6:g} MS/s", flush=True)
+        print(f"AD3 logic analyzer: capturing {what} at {self.rate / 1e6:g} MS/s "
+              f"({buffer} sample buffer, {buffer / self.rate * 1e3:.0f} ms)", flush=True)
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def _run(self):
         try:
+            # Poll back to back: the device buffer only holds a few ms of
+            # samples, and time.sleep() on Windows lasts at least ~15 ms.
+            # read_status() waits on USB with the GIL released, so this
+            # does not starve the main thread.
             while not self._stop.is_set():
-                self._poll()
-                time.sleep(0.005)
+                if not self._poll():
+                    time.sleep(0)
             self._poll()
+            self._report_lost(force=True)
         except Exception as e:  # keep the test going; the failure shows in the summary
             print(f"AD3 logic analyzer stopped: {e}", flush=True)
 
@@ -258,13 +274,12 @@ class Ad3LogicCapture:
         if lost or corrupted:
             self.lost += lost + corrupted
             self._n += lost
-            print(f"AD3: logic analyzer lost {lost + corrupted} samples "
-                  f"(lower NPZ_CI_AD3_LA_RATE?)", flush=True)
+            self._report_lost()
             self._i2c.reset()
             if self._uart:
                 self._uart.reset(self._n)
         if not available:
-            return
+            return 0
         data = di.get_data(sample_count=available)
         start, self._n = self._n, self._n + available
 
@@ -279,6 +294,17 @@ class Ad3LogicCapture:
             events.append((txn.sample, "[I2C ] " + self.describe(txn)))
         for _, text in sorted(events, key=lambda e: e[0]):
             _print(text)
+        return available
+
+    def _report_lost(self, force=False):
+        """Reports lost samples at most once a second, so a struggling USB
+        link does not flood the log."""
+        now = time.monotonic()
+        if self.lost == self._lost_printed or (not force and now - self._lost_print_t < 1.0):
+            return
+        print(f"AD3: logic analyzer lost {self.lost - self._lost_printed} samples "
+              f"({self.lost} in total; lower NPZ_CI_AD3_LA_RATE?)", flush=True)
+        self._lost_printed, self._lost_print_t = self.lost, now
 
     def _uart_byte(self, sample, byte):
         if self._pending_sample is None:

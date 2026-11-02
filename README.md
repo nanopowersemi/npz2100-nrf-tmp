@@ -479,7 +479,7 @@ the log lines:
 
 At the end of the capture comes a count of reads and writes per register,
 and a test can look at the transactions in `log.i2c`. The default sample
-rate of 2 MS/s suits 100 kHz I2C; lost samples are reported, and the rate
+rate of 1 MS/s suits 100 kHz I2C and 115200 baud; lost samples are reported, and the rate
 can be set with `NPZ_CI_AD3_LA_RATE`.
 
 ---
