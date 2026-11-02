@@ -50,7 +50,7 @@ source "subsys/logging/Kconfig.template.log_config"
 
 config NPZ2100_SHADOW
 	bool "Enable register shadow tracking"
-	default y
+	default n
 	help
 	  When enabled (default), the driver maintains an in-memory shadow of
 	  the nPZ2100 register state.  npz2100_apply_regmap() diffs the desired
