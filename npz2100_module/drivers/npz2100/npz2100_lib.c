@@ -277,26 +277,32 @@ static void config_update(npz2100_config_t *cfg, uint8_t start_reg,
  *
  * Banked addresses resolve against cfg->p_bank, which must match the bank
  * selected on the device. Every register in the block must be writable.
+ *
+ * Builds the [reg, data...] buffer itself and calls the HAL directly:
+ * npz2100_reg_burst_write() puts a 257-byte buffer on the stack, too much
+ * for the calling thread at the depth npz2100_map_apply() calls this from.
  */
 static npz2100_err_t write_block(const npz2100_hal_t *hal,
                                  npz2100_config_t    *cfg,
                                  uint8_t              start_reg,
                                  uint8_t              len)
 {
-    uint8_t buf[NPZ2100_RUN_MAX];
+    uint8_t buf[1u + NPZ2100_RUN_MAX];
 
-    if (len == 0u || len > NPZ2100_RUN_MAX) {
+    if (hal == NULL || hal->write == NULL ||
+        len == 0u || len > NPZ2100_RUN_MAX) {
         return NPZ2100_ERR_ARG;
     }
+    buf[0] = start_reg;
     for (uint8_t i = 0u; i < len; i++) {
         const uint8_t *field = config_field(cfg, cfg->p_bank,
                                             (uint8_t)(start_reg + i));
         if (field == NULL) {
             return NPZ2100_ERR_ARG;
         }
-        buf[i] = *field;
+        buf[1u + i] = *field;
     }
-    return npz2100_reg_burst_write(hal, start_reg, buf, len);
+    return hal->write(hal->i2c_addr, buf, 1u + (size_t)len, hal->ctx);
 }
 
 /**
@@ -477,7 +483,7 @@ typedef struct {
     const npz2100_hal_t *hal;
     npz2100_config_t    *cfg;
 #if !NPZ2100_SHADOW_ENABLE
-    npz2100_config_t     defaults;  /* Reset values, the diff reference. */
+    npz2100_config_t    *defaults;  /* Reset values, the diff reference. */
 #endif
     uint8_t              written;   /* Registers written to the device. */
 
@@ -567,7 +573,7 @@ static npz2100_err_t apply_visitor(uint8_t addr, uint8_t value, void *user)
     bool changed = (*field != value);
 #else
     bool changed = (addr == NPZ2100_REG_P_BANK)
-                || (*config_field(&ctx->defaults, cfg->p_bank, addr) != value);
+                || (*config_field(ctx->defaults, cfg->p_bank, addr) != value);
 #endif
 
     if (addr == NPZ2100_REG_P_BANK || addr == NPZ2100_REG_IDLE_RST) {
@@ -642,7 +648,12 @@ npz2100_err_t npz2100_map_apply(const npz2100_hal_t *hal,
     apply_ctx_t ctx = { .hal = hal, .cfg = cfg, .written = 0u,
                         .run_len = 0u, .gap = 0u, .must_end = -1 };
 #if !NPZ2100_SHADOW_ENABLE
-    (void)npz2100_config_init_defaults(&ctx.defaults);
+    /* Static rather than on the stack: map_apply() runs on the caller's
+     * thread, often main with a small stack. Every call writes the same
+     * reset values, so concurrent calls cannot see a wrong value. */
+    static npz2100_config_t defaults;
+    (void)npz2100_config_init_defaults(&defaults);
+    ctx.defaults = &defaults;
 #endif
     npz2100_err_t err = map_walk(map, map_len, apply_visitor, &ctx);
     if (err == NPZ2100_OK) {
