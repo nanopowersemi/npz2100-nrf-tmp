@@ -14,6 +14,8 @@ CAPTURE_S = 20
 # Must match BMP280_I2C_ADDR in src/npz2100_regmap.h.
 BMP280_ADDR = 0x76
 POLL_PERIOD_S = 2.0
+# The nPZ2100 timer accuracy varies from chip to chip.
+POLL_PERIOD_TOL = 0.40  # +/- 40 %
 
 # Air pressure on the bench: anything outside this is a bad reading or conversion.
 PRESS_RANGE_HPA = (800.0, 1100.0)
@@ -88,8 +90,13 @@ def check_polling(log):
         return
     gaps = sorted(b - a for a, b in zip(polls, polls[1:]))
     median = gaps[len(gaps) // 2]
-    if abs(median - POLL_PERIOD_S) > 0.3:
-        log.failures.append(f"BMP280 poll period {median:.2f} s, expected {POLL_PERIOD_S} s")
+    offset = median - POLL_PERIOD_S
+    print(f"BMP280 poll period {median:.2f} s (expected {POLL_PERIOD_S} s, "
+          f"offset {offset:+.2f} s / {offset / POLL_PERIOD_S:+.1%}, "
+          f"tolerance +/-{POLL_PERIOD_TOL:.0%})", flush=True)
+    if abs(offset) > POLL_PERIOD_S * POLL_PERIOD_TOL:
+        log.failures.append(f"BMP280 poll period {median:.2f} s, expected {POLL_PERIOD_S} s "
+                            f"+/- {POLL_PERIOD_TOL:.0%}")
 
 
 if __name__ == "__main__":
