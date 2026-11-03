@@ -20,6 +20,11 @@ PRESS_RANGE_HPA = (800.0, 1100.0)
 
 PRESS = re.compile(r"Pressure: (\d+\.\d{2}) hPa")
 
+# There is no BMP280 on the bench. While SKIP is set, the sample is built
+# but not flashed or tested; pass --no-skip to run it on a bench with one.
+# It also has no step in .github/workflows/samples.yml.
+SKIP = "Disabled because there is no BMP280 on the bench."
+
 
 def check(log):
     log.expect_in_order(
