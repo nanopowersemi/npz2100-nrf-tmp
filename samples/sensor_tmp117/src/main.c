@@ -39,6 +39,7 @@
 
 #include <drivers/npz2100.h>
 #include "npz2100_regmap.h"
+#include "sample_log_color.h"
 
 LOG_MODULE_REGISTER(app, LOG_LEVEL_INF);
 
@@ -82,7 +83,7 @@ static void handle_peripheral_wake(int slot)
 	 */
 	int32_t temp_mdeg = (int32_t)(int16_t)raw_value * 78;  /* ×0.0078125 °C × 10000 */
 
-	LOG_INF("Peripheral %d: raw=0x%04X (~%d.%03d °C)",
+	LOG_INF_HL(SLC_GREEN, "Peripheral %d: raw=0x%04X (~%d.%03d °C)",
 		slot + 1, raw_value,
 		temp_mdeg / 10000, (temp_mdeg % 10000) / 10);
 }
@@ -118,7 +119,7 @@ static void handle_battery_low(void)
 	p->perp_l = (uint8_t)(new_period & 0xFFu);
 	p->perp_h = (uint8_t)(new_period >> 8u);
 
-	LOG_INF("Peripheral 1 period: %u → %u system clocks",
+	LOG_INF_HL(SLC_MAGENTA, "Peripheral 1 period: %u → %u system clocks",
 		current_period, new_period);
 
 	/* npz2100_shadow_flush() is called in main() after all handlers. */
@@ -136,7 +137,7 @@ int main(void)
 	int ret;
 	npz2100_wake_reason_t reason;
 
-	LOG_INF("--- nPZ2100 sample boot ---");
+	LOG_INF_HL(SLC_CYAN, "--- nPZ2100 sample boot ---");
 
 	/* ------------------------------------------------------------------ */
 	/* 0. Verify the Zephyr device is ready (I²C bus OK, probe passed).   */
@@ -194,7 +195,7 @@ int main(void)
 	/*    whether SRAM needs re-initialising (only on cold/POR boot).      */
 	/* ------------------------------------------------------------------ */
 	if (reason.rst_src == NPZ2100_RST_SRC_POR && reason.timeout == 0) {
-		LOG_INF("Power-on reset detected - writing SRAM init commands");
+		LOG_INF_HL(SLC_MAGENTA, "Power-on reset detected - writing SRAM init commands");
 		ret = npz2100_sram_write(npz2100, 0x00u,
 					 sensor_init_cmds,
 					 sizeof(sensor_init_cmds));
@@ -221,12 +222,12 @@ int main(void)
 
 	if (reason.timeout) {
 		/* Periodic time-out: no action needed beyond re-entering idle. */
-		LOG_INF("Periodic time-out wake - nothing to process");
+		LOG_INF_HL(SLC_BLUE, "Periodic time-out wake - nothing to process");
 	}
 
 	if (reason.alarm) {
 		/* Global counter alarm - application-specific handler here. */
-		LOG_INF("Time counter alarm fired");
+		LOG_INF_BANNER("Time counter alarm fired");
 	}
 
 	/* ------------------------------------------------------------------ */
@@ -245,7 +246,7 @@ int main(void)
 	/*    LOG_PANIC() flushes the deferred log buffer first so no output  */
 	/*    is lost when power is cut.                                       */
 	/* ------------------------------------------------------------------ */
-	LOG_INF("Returning to idle - nRF52833 power will be cut");
+	LOG_INF_HL(SLC_GRAY, "Returning to idle - nRF52833 power will be cut");
 	LOG_PANIC();
 
 	ret = npz2100_enter_idle(npz2100);

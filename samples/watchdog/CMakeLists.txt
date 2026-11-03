@@ -46,3 +46,6 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(npz2100_watchdog VERSION 1.0.0)
 
 target_sources(app PRIVATE src/main.c)
+
+# Shared sample helpers (sample_log_color.h).
+target_include_directories(app PRIVATE ../common)

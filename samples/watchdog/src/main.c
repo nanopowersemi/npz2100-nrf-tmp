@@ -42,6 +42,7 @@
 
 #include <drivers/npz2100.h>
 #include "npz2100_regmap.h"
+#include "sample_log_color.h"
 
 LOG_MODULE_REGISTER(app, LOG_LEVEL_INF);
 
@@ -102,7 +103,7 @@ int main(void)
 	npz2100_wake_reason_t reason;
 	uint8_t state;
 
-	LOG_INF("--- nPZ2100 watchdog sample boot ---");
+	LOG_INF_HL(SLC_CYAN, "--- nPZ2100 watchdog sample boot ---");
 
 	if (!device_is_ready(npz2100)) {
 		LOG_ERR("nPZ2100 device not ready");
@@ -142,7 +143,7 @@ int main(void)
 	/* 4. Handle the wake reason.                                          */
 	/* ------------------------------------------------------------------ */
 	if (reason.timeout) {
-		LOG_INF("Time-out wake - watchdog restarted");
+		LOG_INF_HL(SLC_BLUE, "Time-out wake - watchdog restarted");
 
 		ret = demo_state_get(&state);
 		if (ret != 0) {
@@ -159,7 +160,7 @@ int main(void)
 	} else if (reason.srst_src == NPZ2100_SRST_SRC_WDOG) {
 		LOG_WRN("Recovered from a watchdog reset");
 	} else {
-		LOG_INF("Start-up - hang on the next time-out wake");
+		LOG_INF_HL(SLC_MAGENTA, "Start-up - hang on the next time-out wake");
 
 		ret = demo_state_set(APP_DEMO_ARMED);
 		if (ret != 0) {
@@ -172,7 +173,7 @@ int main(void)
 	/*    LOG_PANIC() flushes the deferred log buffer first so no output  */
 	/*    is lost when power is cut.                                       */
 	/* ------------------------------------------------------------------ */
-	LOG_INF("Returning to idle - next wake in 3 s");
+	LOG_INF_HL(SLC_GRAY, "Returning to idle - next wake in 3 s");
 	LOG_PANIC();
 
 	ret = npz2100_enter_idle(npz2100);
