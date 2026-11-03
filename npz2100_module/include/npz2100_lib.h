@@ -67,8 +67,11 @@
  * When npz2100_map_apply() is called:
  *   1. The byte stream is parsed segment by segment.
  *   2. Each resulting (addr, value) pair is compared against the shadow.
- *   3. Only registers whose value differs are written to the device - a
- *      single I²C transaction per changed register.
+ *   3. Only registers whose value differs are written to the device.
+ *      Consecutive changed registers are written in one I²C burst, the
+ *      bytes of a 16/32-bit value (TOUT, PERP, GCT, ...) always together,
+ *      and a burst may include up to NPZ2100_BURST_MAX_GAP unchanged
+ *      configuration registers to join two changed ones.
  *   4. The shadow is updated to match.
  *
  * This minimises I²C bus activity, which matters on the nPZ2100's 100 kHz bus.
@@ -118,6 +121,19 @@
  * ======================================================================= */
 #ifndef NPZ2100_SHADOW_ENABLE
   #define NPZ2100_SHADOW_ENABLE  1
+#endif
+
+/**
+ * @brief Unchanged registers npz2100_map_apply() may write to join two
+ *        changed registers into one burst.
+ *
+ * Writing a few unchanged registers costs less bus time than the address
+ * and register bytes, START and STOP of a second transaction. Only plain
+ * configuration registers are bridged (not the clock, counter, watchdog,
+ * logging or bank selects). Set to 0 to write changed registers only.
+ */
+#ifndef NPZ2100_BURST_MAX_GAP
+  #define NPZ2100_BURST_MAX_GAP  4
 #endif
 
 #include "npz2100_hal.h"
@@ -406,8 +422,14 @@ npz2100_err_t npz2100_config_init_defaults(npz2100_config_t *cfg);
  *     NPZ2100_SHADOW_ENABLE=1, the register's reset default when
  *     NPZ2100_SHADOW_ENABLE=0 (P_BANK is then always written).
  *   - If different: write to device.
- *   - If identical: skip (zero I²C transactions for that register).
+ *   - If identical: skip, unless it is part of a 16/32-bit value with a
+ *     changed byte, or a short gap between changed registers (see
+ *     NPZ2100_BURST_MAX_GAP).
  *   - Either way the shadow field is set to the value.
+ *
+ * Registers to write are sent in bursts of consecutive addresses, one I²C
+ * transaction each, in stream order. A burst never crosses a read-only or
+ * reserved address; P_BANK and IDLE_RST are always written on their own.
  *
  * P_BANK (0x1F) requires no special handling - it is written like any
  * other register in the stream, and subsequent banked addresses (0x20–0x2D)
@@ -419,8 +441,9 @@ npz2100_err_t npz2100_config_init_defaults(npz2100_config_t *cfg);
  * @param[in]     map       Byte-stream register map from the configuration tool.
  * @param[in]     map_len   Total length of @p map in bytes (use sizeof() for
  *                          compile-time arrays).
- * @param[out]    written   Number of registers written to the device, or
- *                          NULL if not needed.
+ * @param[out]    written   Number of registers written to the device
+ *                          (including the unchanged ones written as part of
+ *                          a burst), or NULL if not needed.
  * @return NPZ2100_OK, or the first error encountered.
  *         NPZ2100_ERR_ARG if the stream is malformed (a segment's length
  *         field would read past the end of the buffer).
@@ -621,8 +644,8 @@ npz2100_err_t npz2100_periph_set(npz2100_config_t          *cfg,
 /**
  * @brief Write one peripheral's shadow registers to the device immediately.
  *
- * Selects the peripheral bank, diffs against the shadow, and writes only
- * changed registers - then restores P_BANK to 0 on exit.
+ * Selects the peripheral bank, writes all 14 banked registers (CFGP–TCFGP)
+ * from the shadow in one burst, then restores P_BANK to 0.
  *
  * @param[in]     hal   Pointer to initialised HAL descriptor.
  * @param[in,out] cfg   Config shadow.
@@ -632,6 +655,22 @@ npz2100_err_t npz2100_periph_set(npz2100_config_t          *cfg,
 npz2100_err_t npz2100_periph_apply(const npz2100_hal_t *hal,
                                     npz2100_config_t    *cfg,
                                     uint8_t              slot);
+
+/**
+ * @brief Write every writable register from the shadow to the device.
+ *
+ * Writes the non-banked configuration in six bursts (IOCFG1–TOUT_H,
+ * GCT_MS–PA_CFG, ADCCFG–THRUNA3, LOGCFG–LOGSADDR, CNTCFG–CNT_TRIG_3,
+ * SRAM_BANK), then each peripheral bank as P_BANK plus one 14-byte burst,
+ * and restores P_BANK to 0. The GCT block is written, so the clock is set
+ * to the shadow's value; CNT_VAL is not written.
+ *
+ * @param[in]     hal   Pointer to initialised HAL descriptor.
+ * @param[in,out] cfg   Config shadow.
+ * @return NPZ2100_OK or an error code.
+ */
+npz2100_err_t npz2100_config_flush_ll(const npz2100_hal_t *hal,
+                                       npz2100_config_t    *cfg);
 
 /**
  * @brief Apply ADC configuration to the shadow.

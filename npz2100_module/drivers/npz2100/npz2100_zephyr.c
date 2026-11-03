@@ -441,65 +441,10 @@ npz2100_config_t *npz2100_get_shadow(const struct device *dev)
 int npz2100_shadow_flush(const struct device *dev)
 {
 	struct npz2100_data *data = dev->data;
-	int ret = 0;
-
-	struct { uint8_t addr; uint8_t *field; } regs[] = {
-		{ NPZ2100_REG_IOCFG1,    &data->shadow.iocfg1     },
-		{ NPZ2100_REG_IOCFG2,    &data->shadow.iocfg2     },
-		{ NPZ2100_REG_IOCFG3,    &data->shadow.iocfg3     },
-		{ NPZ2100_REG_IOCFG4,    &data->shadow.iocfg4     },
-		{ NPZ2100_REG_IOCFG5,    &data->shadow.iocfg5     },
-		{ NPZ2100_REG_SYSCFG1,   &data->shadow.syscfg1    },
-		{ NPZ2100_REG_SYSCFG2,   &data->shadow.syscfg2    },
-		{ NPZ2100_REG_TOUT_L,    &data->shadow.tout_l     },
-		{ NPZ2100_REG_TOUT_H,    &data->shadow.tout_h     },
-		{ NPZ2100_REG_GCT_MS,    &data->shadow.gct_ms     },
-		{ NPZ2100_REG_GCT_0,     &data->shadow.gct_0      },
-		{ NPZ2100_REG_GCT_1,     &data->shadow.gct_1      },
-		{ NPZ2100_REG_GCT_2,     &data->shadow.gct_2      },
-		{ NPZ2100_REG_GCT_3,     &data->shadow.gct_3      },
-		{ NPZ2100_REG_GCT_ALM_0, &data->shadow.gct_alm_0  },
-		{ NPZ2100_REG_GCT_ALM_1, &data->shadow.gct_alm_1  },
-		{ NPZ2100_REG_GCT_ALM_2, &data->shadow.gct_alm_2  },
-		{ NPZ2100_REG_GCT_ALM_3, &data->shadow.gct_alm_3  },
-		{ NPZ2100_REG_WDOG_L,    &data->shadow.wdog_l     },
-		{ NPZ2100_REG_WDOG_H,    &data->shadow.wdog_h     },
-		{ NPZ2100_REG_GTC_CFG,   &data->shadow.gtc_cfg    },
-		{ NPZ2100_REG_PA_CFG,    &data->shadow.pa_cfg     },
-		{ NPZ2100_REG_ADCCFG,    &data->shadow.adccfg     },
-		{ NPZ2100_REG_THROVA1,   &data->shadow.throva1    },
-		{ NPZ2100_REG_THRUNA1,   &data->shadow.thruna1    },
-		{ NPZ2100_REG_THROVA2,   &data->shadow.throva2    },
-		{ NPZ2100_REG_THRUNA2,   &data->shadow.thruna2    },
-		{ NPZ2100_REG_THROVA3,   &data->shadow.throva3    },
-		{ NPZ2100_REG_THRUNA3,   &data->shadow.thruna3    },
-		{ NPZ2100_REG_LOGCFG,    &data->shadow.logcfg     },
-		{ NPZ2100_REG_LOGSADDR,  &data->shadow.logsaddr   },
-		{ NPZ2100_REG_CNTCFG,    &data->shadow.cntcfg     },
-		{ NPZ2100_REG_CNT_TRIG_0,&data->shadow.cnt_trig_0 },
-		{ NPZ2100_REG_CNT_TRIG_1,&data->shadow.cnt_trig_1 },
-		{ NPZ2100_REG_CNT_TRIG_2,&data->shadow.cnt_trig_2 },
-		{ NPZ2100_REG_CNT_TRIG_3,&data->shadow.cnt_trig_3 },
-		{ NPZ2100_REG_SRAM_BANK, &data->shadow.sram_bank  },
-	};
+	int ret;
 
 	k_mutex_lock(&data->lock, K_FOREVER);
-
-	for (size_t i = 0u; i < ARRAY_SIZE(regs) && ret == 0; i++) {
-		ret = err_to_zephyr(
-			npz2100_shadow_write_reg(&data->hal, &data->shadow,
-						 regs[i].addr,
-						 *regs[i].field));
-	}
-
-	for (uint8_t slot = 0u;
-	     slot <= NPZ2100_P_BANK_MAX && ret == 0;
-	     slot++) {
-		ret = err_to_zephyr(
-			npz2100_periph_apply(&data->hal,
-					     &data->shadow, slot));
-	}
-
+	ret = err_to_zephyr(npz2100_config_flush_ll(&data->hal, &data->shadow));
 	k_mutex_unlock(&data->lock);
 
 	if (ret != 0) {

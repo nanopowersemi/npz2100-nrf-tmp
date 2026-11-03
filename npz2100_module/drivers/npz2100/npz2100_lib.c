@@ -189,6 +189,163 @@ static npz2100_err_t ensure_bank(const npz2100_hal_t *hal,
 }
 
 /* =========================================================================
+ * Internal: burst helpers
+ *
+ * Writes and reads go to the device in bursts of consecutive registers,
+ * one I2C transaction each, instead of one transaction per register.
+ * ======================================================================= */
+
+/** Longest block of consecutive writable registers (CFGP–TCFGP, 14). */
+#define NPZ2100_RUN_MAX  14u
+
+/**
+ * @brief Find the multi-byte value a register belongs to.
+ *
+ * The bytes of a 16- or 32-bit value are always written together, in one
+ * transaction and in address order, when any of them changes, so the
+ * device never runs with a mix of old and new bytes. For the GCT block this
+ * is required: the write to GCT_3 latches all five bytes.
+ *
+ * @param addr   Register address.
+ * @param first  Set to the value's first (lowest) register address.
+ * @param last   Set to the value's last register address. Both are @p addr
+ *               for a single-byte register.
+ */
+static void reg_group(uint8_t addr, uint8_t *first, uint8_t *last)
+{
+    static const struct { uint8_t first; uint8_t last; } groups[] = {
+        { NPZ2100_REG_TOUT_L,     NPZ2100_REG_TOUT_H     },
+        { NPZ2100_REG_GCT_MS,     NPZ2100_REG_GCT_3      },
+        { NPZ2100_REG_GCT_ALM_0,  NPZ2100_REG_GCT_ALM_3  },
+        { NPZ2100_REG_WDOG_L,     NPZ2100_REG_WDOG_H     },
+        { NPZ2100_REG_PERP_L,     NPZ2100_REG_PERP_H     },
+        { NPZ2100_REG_THROVP_L,   NPZ2100_REG_THROVP_H   },
+        { NPZ2100_REG_THRUNP_L,   NPZ2100_REG_THRUNP_H   },
+        { NPZ2100_REG_CNT_VAL_0,  NPZ2100_REG_CNT_VAL_3  },
+        { NPZ2100_REG_CNT_TRIG_0, NPZ2100_REG_CNT_TRIG_3 },
+    };
+
+    for (size_t i = 0u; i < sizeof(groups) / sizeof(groups[0]); i++) {
+        if (addr >= groups[i].first && addr <= groups[i].last) {
+            *first = groups[i].first;
+            *last  = groups[i].last;
+            return;
+        }
+    }
+    *first = addr;
+    *last  = addr;
+}
+
+/**
+ * @brief True if writing a register with the value it should already hold
+ *        has no side effect.
+ *
+ * npz2100_map_apply() may then write such an unchanged register to join
+ * two changed neighbours into one burst. Registers that are not plain
+ * configuration (the clock, counter, watchdog, alarm enable, logging, the
+ * bank selects) are never written just to save a transaction.
+ */
+static bool reg_bridgeable(uint8_t addr)
+{
+    return (addr >= NPZ2100_REG_IOCFG1     && addr <= NPZ2100_REG_TOUT_H)
+        || (addr >= NPZ2100_REG_GCT_ALM_0  && addr <= NPZ2100_REG_GCT_ALM_3)
+        || (addr == NPZ2100_REG_PA_CFG)
+        || is_periph_addr(addr)
+        || (addr >= NPZ2100_REG_ADCCFG     && addr <= NPZ2100_REG_THRUNA3)
+        || (addr >= NPZ2100_REG_CNT_TRIG_0 && addr <= NPZ2100_REG_CNT_TRIG_3);
+}
+
+/** Copy a block of register values just read or written into @p cfg. */
+static void config_update(npz2100_config_t *cfg, uint8_t start_reg,
+                          const uint8_t *data, size_t len)
+{
+    if (cfg == NULL) {
+        return;
+    }
+    for (size_t i = 0u; i < len; i++) {
+        uint8_t *field = config_field(cfg, cfg->p_bank,
+                                      (uint8_t)(start_reg + i));
+        if (field != NULL) {
+            *field = data[i];
+        }
+    }
+}
+
+/**
+ * @brief Write @p len consecutive registers from @p start_reg in one burst,
+ *        with the values held in @p cfg.
+ *
+ * Banked addresses resolve against cfg->p_bank, which must match the bank
+ * selected on the device. Every register in the block must be writable.
+ */
+static npz2100_err_t write_block(const npz2100_hal_t *hal,
+                                 npz2100_config_t    *cfg,
+                                 uint8_t              start_reg,
+                                 uint8_t              len)
+{
+    uint8_t buf[NPZ2100_RUN_MAX];
+
+    if (len == 0u || len > NPZ2100_RUN_MAX) {
+        return NPZ2100_ERR_ARG;
+    }
+    for (uint8_t i = 0u; i < len; i++) {
+        const uint8_t *field = config_field(cfg, cfg->p_bank,
+                                            (uint8_t)(start_reg + i));
+        if (field == NULL) {
+            return NPZ2100_ERR_ARG;
+        }
+        buf[i] = *field;
+    }
+    return npz2100_reg_burst_write(hal, start_reg, buf, len);
+}
+
+/**
+ * @brief Read @p len consecutive registers from @p start_reg in one burst
+ *        and store them in @p cfg. Read-only registers in the block are
+ *        read and dropped.
+ */
+static npz2100_err_t read_block(const npz2100_hal_t *hal,
+                                npz2100_config_t    *cfg,
+                                uint8_t              start_reg,
+                                uint8_t              len)
+{
+    uint8_t buf[NPZ2100_RUN_MAX];
+
+    if (len == 0u || len > NPZ2100_RUN_MAX) {
+        return NPZ2100_ERR_ARG;
+    }
+    npz2100_err_t err = npz2100_reg_burst_read(hal, start_reg, buf, len);
+    if (err == NPZ2100_OK) {
+        config_update(cfg, start_reg, buf, len);
+    }
+    return err;
+}
+
+/** Number of registers from @p first to @p last, inclusive. */
+#define REG_SPAN(first, last)  ((uint8_t)((last) - (first) + 1u))
+
+/**
+ * Non-banked blocks of consecutive writable registers, in address order.
+ * Reserved addresses (0x0E–0x0F, 0x1D–0x1E) fall between blocks.
+ */
+static const struct { uint8_t start; uint8_t len; } config_blocks[] = {
+    /* IOCFG1–IOCFG5, SYSCFG1–SYSCFG2, TOUT_L/H */
+    { NPZ2100_REG_IOCFG1,    REG_SPAN(NPZ2100_REG_IOCFG1,  NPZ2100_REG_TOUT_H)     },
+    /* GCT (GCT_3 after GCT_MS–GCT_2, latching it), GCT_ALM, WDOG, GTC_CFG, PA_CFG */
+    { NPZ2100_REG_GCT_MS,    REG_SPAN(NPZ2100_REG_GCT_MS,  NPZ2100_REG_PA_CFG)     },
+    /* ADCCFG, THROVA1–THRUNA3 */
+    { NPZ2100_REG_ADCCFG,    REG_SPAN(NPZ2100_REG_ADCCFG,  NPZ2100_REG_THRUNA3)    },
+    /* LOGCFG, LOGSADDR */
+    { NPZ2100_REG_LOGCFG,    REG_SPAN(NPZ2100_REG_LOGCFG,  NPZ2100_REG_LOGSADDR)   },
+    /* CNTCFG, CNT_TRIG_0–3 (CNT_VAL is the running count and is not written) */
+    { NPZ2100_REG_CNTCFG,    REG_SPAN(NPZ2100_REG_CNTCFG,  NPZ2100_REG_CNT_TRIG_3) },
+    { NPZ2100_REG_SRAM_BANK, 1u },
+};
+
+/** Number of banked peripheral registers, CFGP–TCFGP. */
+#define PERIPH_REGS  REG_SPAN(NPZ2100_REG_CFGP, NPZ2100_REG_TCFGP)
+
+/* =========================================================================
  * Internal: regmap byte-stream walker
  *
  * Format: concatenation of segments shaped
@@ -323,13 +480,52 @@ typedef struct {
     npz2100_config_t     defaults;  /* Reset values, the diff reference. */
 #endif
     uint8_t              written;   /* Registers written to the device. */
+
+    /*
+     * The pending burst: run_len registers from run_start are to be
+     * written, then `gap` unchanged registers that are only written if a
+     * changed register follows them. must_end is the last address the
+     * burst has to reach to complete a multi-byte value, or -1. The values
+     * are taken from cfg when the burst is written.
+     */
+    uint8_t              run_start;
+    uint8_t              run_len;
+    uint8_t              gap;
+    int16_t              must_end;
 } apply_ctx_t;
+
+/**
+ * @brief Write the pending burst of npz2100_map_apply(), if any.
+ *
+ * Trailing unchanged registers (the gap) are dropped. If the burst stops
+ * inside a multi-byte value, it is extended to the value's last byte with
+ * the values from the config struct.
+ */
+static npz2100_err_t apply_flush(apply_ctx_t *ctx)
+{
+    npz2100_err_t err = NPZ2100_OK;
+
+    if (ctx->run_len > 0u) {
+        uint8_t len = ctx->run_len;
+        if (ctx->must_end >= (int16_t)ctx->run_start + (int16_t)len) {
+            len = (uint8_t)(ctx->must_end - ctx->run_start + 1);
+        }
+        err = write_block(ctx->hal, ctx->cfg, ctx->run_start, len);
+        if (err == NPZ2100_OK) {
+            ctx->written = (uint8_t)(ctx->written + len);
+        }
+    }
+    ctx->run_len  = 0u;
+    ctx->gap      = 0u;
+    ctx->must_end = -1;
+    return err;
+}
 
 /**
  * @brief Visitor for npz2100_map_apply().
  *
  * Read-only, reserved and SRAM addresses have no config field and are
- * skipped. A register is written only when the value differs from the
+ * skipped. A register needs writing when the value differs from the
  * reference:
  *   - NPZ2100_SHADOW_ENABLE=1: the shadow, i.e. the device state read by
  *     npz2100_map_readback() plus every write since.
@@ -337,6 +533,17 @@ typedef struct {
  *     is needed; the regmap only costs I2C writes for the registers it
  *     changes from reset. P_BANK is always written in this mode, since the
  *     bank the device currently has selected is not known.
+ *
+ * Registers that need writing are collected into bursts of consecutive
+ * addresses, written in one I2C transaction each, in stream order:
+ *   - A changed byte of a 16- or 32-bit value (TOUT, PERP, THROVP, ...)
+ *     writes the whole value in the same burst; see reg_group().
+ *   - Up to NPZ2100_BURST_MAX_GAP unchanged registers between two changed
+ *     ones are written with them, with the regmap's value, when that has
+ *     no side effect; see reg_bridgeable().
+ *   - A burst never crosses a read-only or reserved address.
+ *   - P_BANK and IDLE_RST are written on their own: P_BANK selects the bank
+ *     the following banked addresses resolve against.
  *
  * The config field is updated in both modes, written or not, so the shadow
  * holds the regmap's values afterwards. P_BANK updates cfg->p_bank so
@@ -346,28 +553,78 @@ static npz2100_err_t apply_visitor(uint8_t addr, uint8_t value, void *user)
 {
     apply_ctx_t *ctx = (apply_ctx_t *)user;
     npz2100_config_t *cfg = ctx->cfg;
-    uint8_t slot = cfg->p_bank;
+    npz2100_err_t err;
 
-    uint8_t *field = config_field(cfg, slot, addr);
+    uint8_t *field = config_field(cfg, cfg->p_bank, addr);
 
     if (field == NULL) {
-        return NPZ2100_OK;  /* Read-only / reserved / SRAM - skip silently. */
+        /* Read-only / reserved / SRAM - skipped, and a burst must not
+         * write across it. */
+        return apply_flush(ctx);
     }
 
 #if NPZ2100_SHADOW_ENABLE
-    bool write = (*field != value);
+    bool changed = (*field != value);
 #else
-    bool write = (addr == NPZ2100_REG_P_BANK)
-              || (*config_field(&ctx->defaults, slot, addr) != value);
+    bool changed = (addr == NPZ2100_REG_P_BANK)
+                || (*config_field(&ctx->defaults, cfg->p_bank, addr) != value);
 #endif
 
-    if (write) {
-        npz2100_err_t err = npz2100_reg_write(ctx->hal, addr, value);
+    if (addr == NPZ2100_REG_P_BANK || addr == NPZ2100_REG_IDLE_RST) {
+        /* The pending burst belongs to the bank selected now. */
+        err = apply_flush(ctx);
         if (err != NPZ2100_OK) {
             return err;
         }
-        ctx->written++;
+        if (changed) {
+            err = npz2100_reg_write(ctx->hal, addr, value);
+            if (err != NPZ2100_OK) {
+                return err;
+            }
+            ctx->written++;
+        }
+        *field = value;
+        return NPZ2100_OK;
     }
+
+    /* Does addr directly follow the pending burst (and its gap)? */
+    bool next   = (ctx->run_len > 0u)
+               && ((uint16_t)ctx->run_start + ctx->run_len + ctx->gap == addr);
+    bool forced = next && ((int16_t)addr <= ctx->must_end);
+
+    if (changed || forced) {
+        uint8_t first;
+        uint8_t last;
+        reg_group(addr, &first, &last);
+
+        if (next) {
+            /* Extend the burst; the unchanged gap is written after all. */
+            ctx->run_len = (uint8_t)(ctx->run_len + ctx->gap + 1u);
+            ctx->gap     = 0u;
+        } else {
+            err = apply_flush(ctx);
+            if (err != NPZ2100_OK) {
+                return err;
+            }
+            /* Start at the first byte of a multi-byte value; bytes before
+             * addr are taken from the config struct. */
+            ctx->run_start = first;
+            ctx->run_len   = (uint8_t)(addr - first + 1u);
+        }
+        if ((int16_t)last > ctx->must_end) {
+            ctx->must_end = last;
+        }
+    } else if (next && ctx->gap < NPZ2100_BURST_MAX_GAP
+               && reg_bridgeable(addr)) {
+        /* Unchanged - keep it in case a changed register follows. */
+        ctx->gap++;
+    } else {
+        err = apply_flush(ctx);
+        if (err != NPZ2100_OK) {
+            return err;
+        }
+    }
+
     *field = value;
     return NPZ2100_OK;
 }
@@ -382,11 +639,15 @@ npz2100_err_t npz2100_map_apply(const npz2100_hal_t *hal,
         return NPZ2100_ERR_ARG;
     }
 
-    apply_ctx_t ctx = { .hal = hal, .cfg = cfg, .written = 0u };
+    apply_ctx_t ctx = { .hal = hal, .cfg = cfg, .written = 0u,
+                        .run_len = 0u, .gap = 0u, .must_end = -1 };
 #if !NPZ2100_SHADOW_ENABLE
     (void)npz2100_config_init_defaults(&ctx.defaults);
 #endif
     npz2100_err_t err = map_walk(map, map_len, apply_visitor, &ctx);
+    if (err == NPZ2100_OK) {
+        err = apply_flush(&ctx);
+    }
 
     if (written != NULL) {
         *written = ctx.written;
@@ -395,22 +656,6 @@ npz2100_err_t npz2100_map_apply(const npz2100_hal_t *hal,
 }
 
 /* -------------------------------------------------------------------------*/
-
-/** Copy a block of register values just read or written into @p cfg. */
-static void config_update(npz2100_config_t *cfg, uint8_t start_reg,
-                          const uint8_t *data, size_t len)
-{
-    if (cfg == NULL) {
-        return;
-    }
-    for (size_t i = 0u; i < len; i++) {
-        uint8_t *field = config_field(cfg, cfg->p_bank,
-                                      (uint8_t)(start_reg + i));
-        if (field != NULL) {
-            *field = data[i];
-        }
-    }
-}
 
 npz2100_err_t npz2100_regs_read_ll(const npz2100_hal_t *hal,
                                     npz2100_config_t    *cfg,
@@ -462,139 +707,32 @@ npz2100_err_t npz2100_map_readback(const npz2100_hal_t *hal,
     }
 
     npz2100_err_t err;
-    uint8_t       v;
 
-    /* --- Non-banked registers ------------------------------------------- */
-    /* Read in address order; burst where consecutive. */
-
-#define RB(addr, field) \
-    do { \
-        err = npz2100_reg_read(hal, (addr), &v); \
-        if (err != NPZ2100_OK) { return err; } \
-        cfg->field = v; \
-    } while (0)
-
-    RB(NPZ2100_REG_IOCFG1,     iocfg1);
-    RB(NPZ2100_REG_IOCFG2,     iocfg2);
-    RB(NPZ2100_REG_IOCFG3,     iocfg3);
-    RB(NPZ2100_REG_IOCFG4,     iocfg4);
-    RB(NPZ2100_REG_IOCFG5,     iocfg5);
-    RB(NPZ2100_REG_SYSCFG1,    syscfg1);
-    RB(NPZ2100_REG_SYSCFG2,    syscfg2);
-
-    /* TOUT: 2 consecutive bytes - use burst for efficiency. */
-    {
-        uint8_t buf[2];
-        err = npz2100_reg_burst_read(hal, NPZ2100_REG_TOUT_L, buf, 2u);
+    /* --- Non-banked registers: one burst per block ---------------------- */
+    for (size_t i = 0u; i < sizeof(config_blocks) / sizeof(config_blocks[0]); i++) {
+        err = read_block(hal, cfg, config_blocks[i].start, config_blocks[i].len);
         if (err != NPZ2100_OK) { return err; }
-        cfg->tout_l = buf[0];
-        cfg->tout_h = buf[1];
     }
 
-    /* GCT: 5 consecutive bytes. */
-    {
-        uint8_t buf[5];
-        err = npz2100_reg_burst_read(hal, NPZ2100_REG_GCT_MS, buf, 5u);
-        if (err != NPZ2100_OK) { return err; }
-        cfg->gct_ms = buf[0];
-        cfg->gct_0  = buf[1];
-        cfg->gct_1  = buf[2];
-        cfg->gct_2  = buf[3];
-        cfg->gct_3  = buf[4];
-    }
+    /* The event counter value, CNT_VAL_0–3, between LOGSADDR and CNTCFG. */
+    err = read_block(hal, cfg, NPZ2100_REG_CNT_VAL_0,
+                     REG_SPAN(NPZ2100_REG_CNT_VAL_0, NPZ2100_REG_CNT_VAL_3));
+    if (err != NPZ2100_OK) { return err; }
 
-    /* GCTALM: 4 consecutive bytes. */
-    {
-        uint8_t buf[4];
-        err = npz2100_reg_burst_read(hal, NPZ2100_REG_GCT_ALM_0, buf, 4u);
-        if (err != NPZ2100_OK) { return err; }
-        cfg->gct_alm_0 = buf[0];
-        cfg->gct_alm_1 = buf[1];
-        cfg->gct_alm_2 = buf[2];
-        cfg->gct_alm_3 = buf[3];
-    }
-
-    /* WDOG: 2 consecutive bytes. */
-    {
-        uint8_t buf[2];
-        err = npz2100_reg_burst_read(hal, NPZ2100_REG_WDOG_L, buf, 2u);
-        if (err != NPZ2100_OK) { return err; }
-        cfg->wdog_l = buf[0];
-        cfg->wdog_h = buf[1];
-    }
-
-    RB(NPZ2100_REG_GTC_CFG, gtc_cfg);
-    RB(NPZ2100_REG_PA_CFG,  pa_cfg);
-
-    /* --- Per-peripheral banks ------------------------------------------- */
+    /* --- Per-peripheral banks: select, then one 14-byte burst ------------ */
     for (uint8_t slot = 0u; slot <= NPZ2100_P_BANK_MAX; slot++) {
         err = npz2100_reg_write(hal, NPZ2100_REG_P_BANK, NPZ2100_P_BANK(slot));
         if (err != NPZ2100_OK) { return err; }
+        cfg->p_bank = slot;
 
-        /* Banked regs 0x20–0x2D are 14 consecutive bytes. */
-        uint8_t buf[14];
-        err = npz2100_reg_burst_read(hal, NPZ2100_REG_CFGP, buf, 14u);
+        err = read_block(hal, cfg, NPZ2100_REG_CFGP, PERIPH_REGS);
         if (err != NPZ2100_OK) { return err; }
-
-        npz2100_periph_shadow_t *p = &cfg->periph[slot];
-        p->cfgp     = buf[0];
-        p->iop      = buf[1];
-        p->modp     = buf[2];
-        p->perp_l   = buf[3];
-        p->perp_h   = buf[4];
-        p->ncmdp    = buf[5];
-        p->addrp    = buf[6];
-        p->rregp    = buf[7];
-        p->throvp_l = buf[8];
-        p->throvp_h = buf[9];
-        p->thrunp_l = buf[10];
-        p->thrunp_h = buf[11];
-        p->twtp     = buf[12];
-        p->tcfgp    = buf[13];
     }
 
     /* Restore P_BANK to 0 after readback. */
     err = npz2100_reg_write(hal, NPZ2100_REG_P_BANK, 0x00u);
     if (err != NPZ2100_OK) { return err; }
     cfg->p_bank = 0x00u;
-
-    /* --- ADC ------------------------------------------------------------ */
-    RB(NPZ2100_REG_ADCCFG,  adccfg);
-    RB(NPZ2100_REG_THROVA1, throva1);
-    RB(NPZ2100_REG_THRUNA1, thruna1);
-    RB(NPZ2100_REG_THROVA2, throva2);
-    RB(NPZ2100_REG_THRUNA2, thruna2);
-    RB(NPZ2100_REG_THROVA3, throva3);
-    RB(NPZ2100_REG_THRUNA3, thruna3);
-
-    /* --- Logging -------------------------------------------------------- */
-    RB(NPZ2100_REG_LOGCFG,   logcfg);
-    RB(NPZ2100_REG_LOGSADDR, logsaddr);
-
-    /* --- Event counter -------------------------------------------------- */
-    {
-        uint8_t buf[4];
-        err = npz2100_reg_burst_read(hal, NPZ2100_REG_CNT_VAL_0, buf, 4u);
-        if (err != NPZ2100_OK) { return err; }
-        cfg->cnt_val_0 = buf[0];
-        cfg->cnt_val_1 = buf[1];
-        cfg->cnt_val_2 = buf[2];
-        cfg->cnt_val_3 = buf[3];
-    }
-    RB(NPZ2100_REG_CNTCFG, cntcfg);
-    {
-        uint8_t buf[4];
-        err = npz2100_reg_burst_read(hal, NPZ2100_REG_CNT_TRIG_0, buf, 4u);
-        if (err != NPZ2100_OK) { return err; }
-        cfg->cnt_trig_0 = buf[0];
-        cfg->cnt_trig_1 = buf[1];
-        cfg->cnt_trig_2 = buf[2];
-        cfg->cnt_trig_3 = buf[3];
-    }
-
-    RB(NPZ2100_REG_SRAM_BANK, sram_bank);
-
-#undef RB
 
     return NPZ2100_OK;
 }
@@ -898,52 +1036,49 @@ npz2100_err_t npz2100_periph_apply(const npz2100_hal_t *hal,
         return NPZ2100_ERR_ARG;
     }
 
-    npz2100_err_t err;
-
     /*
-     * The banked registers 0x20–0x2D are 14 consecutive addresses.
-     * Build a small lookup table of (addr, shadow-field-offset) pairs and
-     * write each one unconditionally - npz2100_periph_set() has already
-     * placed the *desired* values into the shadow, so this call's purpose
-     * is to push that intent to the device. Use npz2100_map_apply() (with
-     * a tool-generated stream) or npz2100_map_readback() beforehand if you
-     * need true diff-against-device-state semantics for this peripheral.
+     * npz2100_periph_set() has already placed the *desired* values into the
+     * shadow, so this call pushes that intent to the device unconditionally.
+     * Use npz2100_map_apply() (with a tool-generated stream) if you need
+     * diff semantics for this peripheral.
+     *
+     * The banked registers CFGP–TCFGP (0x20–0x2D) are 14 consecutive
+     * addresses: select the bank, then write them all in one burst.
      */
-    const struct { uint8_t addr; uint8_t offset; } fields[] = {
-        { NPZ2100_REG_CFGP,      offsetof(npz2100_periph_shadow_t, cfgp)     },
-        { NPZ2100_REG_IOP,       offsetof(npz2100_periph_shadow_t, iop)      },
-        { NPZ2100_REG_MODP,      offsetof(npz2100_periph_shadow_t, modp)     },
-        { NPZ2100_REG_PERP_L,    offsetof(npz2100_periph_shadow_t, perp_l)   },
-        { NPZ2100_REG_PERP_H,    offsetof(npz2100_periph_shadow_t, perp_h)   },
-        { NPZ2100_REG_NCMDP,     offsetof(npz2100_periph_shadow_t, ncmdp)    },
-        { NPZ2100_REG_ADDRP,     offsetof(npz2100_periph_shadow_t, addrp)    },
-        { NPZ2100_REG_RREGP,     offsetof(npz2100_periph_shadow_t, rregp)    },
-        { NPZ2100_REG_THROVP_L,  offsetof(npz2100_periph_shadow_t, throvp_l) },
-        { NPZ2100_REG_THROVP_H,  offsetof(npz2100_periph_shadow_t, throvp_h) },
-        { NPZ2100_REG_THRUNP_L,  offsetof(npz2100_periph_shadow_t, thrunp_l) },
-        { NPZ2100_REG_THRUNP_H,  offsetof(npz2100_periph_shadow_t, thrunp_h) },
-        { NPZ2100_REG_TWTP,      offsetof(npz2100_periph_shadow_t, twtp)     },
-        { NPZ2100_REG_TCFGP,     offsetof(npz2100_periph_shadow_t, tcfgp)    },
-    };
-
-    const uint8_t n = (uint8_t)(sizeof(fields) / sizeof(fields[0]));
-    const uint8_t *base = (const uint8_t *)&cfg->periph[slot];
-
-    /* Select the bank once, up front. */
-    err = ensure_bank(hal, cfg, slot);
+    npz2100_err_t err = ensure_bank(hal, cfg, slot);
     if (err != NPZ2100_OK) { return err; }
 
-    for (uint8_t i = 0u; i < n; i++) {
-        uint8_t desired = base[fields[i].offset];
-        err = npz2100_reg_write(hal, fields[i].addr, desired);
+    err = write_block(hal, cfg, NPZ2100_REG_CFGP, PERIPH_REGS);
+    if (err != NPZ2100_OK) { return err; }
+
+    /* Restore P_BANK to slot 0 after apply. */
+    return ensure_bank(hal, cfg, 0x00u);
+}
+
+/* -------------------------------------------------------------------------*/
+
+npz2100_err_t npz2100_config_flush_ll(const npz2100_hal_t *hal,
+                                       npz2100_config_t    *cfg)
+{
+    if (hal == NULL || cfg == NULL) {
+        return NPZ2100_ERR_ARG;
+    }
+
+    npz2100_err_t err;
+
+    for (size_t i = 0u; i < sizeof(config_blocks) / sizeof(config_blocks[0]); i++) {
+        err = write_block(hal, cfg, config_blocks[i].start, config_blocks[i].len);
         if (err != NPZ2100_OK) { return err; }
     }
 
-    /* Restore P_BANK to slot 0 after apply. */
-    err = ensure_bank(hal, cfg, 0x00u);
-    if (err != NPZ2100_OK) { return err; }
+    for (uint8_t slot = 0u; slot <= NPZ2100_P_BANK_MAX; slot++) {
+        err = ensure_bank(hal, cfg, slot);
+        if (err != NPZ2100_OK) { return err; }
+        err = write_block(hal, cfg, NPZ2100_REG_CFGP, PERIPH_REGS);
+        if (err != NPZ2100_OK) { return err; }
+    }
 
-    return NPZ2100_OK;
+    return ensure_bank(hal, cfg, 0x00u);
 }
 
 /* -------------------------------------------------------------------------*/
