@@ -101,6 +101,14 @@ jobs:
         if: ${{ !cancelled() && steps.bench.outcome == 'success' }}
         run: python -u scripts/ci/run_samples.py --sample sensor_tmp117
 
+      - name: Test sensor_bme280
+        if: ${{ !cancelled() && steps.bench.outcome == 'success' }}
+        run: python -u scripts/ci/run_samples.py --sample sensor_bme280
+
+      - name: Test sensor_bmp280
+        if: ${{ !cancelled() && steps.bench.outcome == 'success' }}
+        run: python -u scripts/ci/run_samples.py --sample sensor_bmp280
+
       - name: Test watchdog
         if: ${{ !cancelled() && steps.bench.outcome == 'success' }}
         run: python -u scripts/ci/run_samples.py --sample watchdog

@@ -52,6 +52,8 @@ npz2100_ncs/
     │   ├── ci/test.py           ← Bench test (see Continuous integration)
     │   └── src/
     │       └── main.c
+    ├── sensor_bme280/           ← Same layout, BME280 threshold wake
+    ├── sensor_bmp280/           ← Same layout, BMP280 pressure threshold wake
     ├── global_counter_alarm/    ← Same layout
     └── watchdog/                ← Same layout
 ```
