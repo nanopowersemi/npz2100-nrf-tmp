@@ -5,6 +5,12 @@ Discovers samples/*/ci/test.py, and for each one: builds the sample for
 --board, opens the serial port, flashes, captures the log for the time the
 test asks for, then runs the test's check() on it.
 
+Every test in the sample's sample.yaml is a variant tested on the bench,
+with the same ci/test.py. The first is the default, named after the sample
+(sensor_bme280); the others are named after the last part of their test
+name (sample.npz2100.sensor_bme280.shadow -> sensor_bme280.shadow) and are
+built with their extra_configs added.
+
 Usage (from an NCS environment, e.g. `nrfutil sdk-manager toolchain launch
 --ncs-version v3.3.4 -- python scripts/ci/run_samples.py ...`):
 
@@ -13,6 +19,7 @@ Usage (from an NCS environment, e.g. `nrfutil sdk-manager toolchain launch
     python scripts/ci/run_samples.py --board ... --port ad3:4 --ad3
     python scripts/ci/run_samples.py --board ... --port ad3:4 --ad3 --i2c
     python scripts/ci/run_samples.py --board ... --port ... --sample global_counter_alarm
+    python scripts/ci/run_samples.py --board ... --port ... --sample sensor_bme280.shadow
     python scripts/ci/run_samples.py --board ... --build-only
 
 With --ad3, each sample is tested from a clean start: the bench is
@@ -33,16 +40,44 @@ import argparse
 import importlib.util
 import os
 import sys
+from collections import namedtuple
 
 from ci_utils import (REPO_ROOT, SAMPLES_DIR, Log, ad3_clean_erase, build, common_checks,
                       flash, open_ad3, open_capture, parse_i2c_pins)
 
 
+# name: what --sample selects and the results show; extra_configs: Kconfig
+# lines added to the build.
+Variant = namedtuple("Variant", "name test_path extra_configs")
+
+
+def variants(test_path):
+    """The bench variants of a sample: one per test in its sample.yaml."""
+    sample = test_path.parents[1].name
+    try:
+        import yaml
+        with open(test_path.parents[1] / "sample.yaml", encoding="utf-8") as f:
+            spec = yaml.safe_load(f) or {}
+    except (ImportError, OSError):
+        spec = {}
+    common = (spec.get("common") or {}).get("extra_configs") or []
+    found = []
+    for i, (key, test) in enumerate((spec.get("tests") or {}).items()):
+        name = sample if i == 0 else f"{sample}.{key.rsplit('.', 1)[-1]}"
+        found.append(Variant(name, test_path, list(common) + list((test or {}).get("extra_configs") or [])))
+    return found or [Variant(sample, test_path, [])]
+
+
 def discover(names=None):
-    tests = sorted(SAMPLES_DIR.glob("*/ci/test.py"))
+    found = [v for t in sorted(SAMPLES_DIR.glob("*/ci/test.py")) for v in variants(t)]
     if names:
-        tests = [t for t in tests if t.parents[1].name in names]
-    return tests
+        unknown = set(names) - {v.name for v in found}
+        if unknown:
+            print(f"Unknown sample or variant: {', '.join(sorted(unknown))} "
+                  f"(have: {', '.join(v.name for v in found)})", flush=True)
+            sys.exit(1)
+        found = [v for v in found if v.name in names]
+    return found
 
 
 def load(test_path):
@@ -53,12 +88,14 @@ def load(test_path):
     return module
 
 
-def run_sample(test_path, args):
+def run_sample(variant, args):
+    test_path = variant.test_path
     sample_dir = test_path.parents[1]
     test = load(test_path)
-    build_dir = REPO_ROOT / "build" / "ci" / sample_dir.name
+    build_dir = REPO_ROOT / "build" / "ci" / variant.name
 
-    build(sample_dir, args.board, build_dir, quiet=not args.verbose)
+    build(sample_dir, args.board, build_dir, quiet=not args.verbose,
+          extra_configs=variant.extra_configs)
     if args.build_only:
         return []
 
@@ -67,7 +104,7 @@ def run_sample(test_path, args):
     # warning on the GitHub run so it is not forgotten.
     skip = getattr(test, "SKIP", None)
     if skip and not args.no_skip:
-        print(f"::warning title=Bench test disabled: {sample_dir.name}::{skip} "
+        print(f"::warning title=Bench test disabled: {variant.name}::{skip} "
               f"Re-enable it by removing SKIP from samples/{sample_dir.name}/ci/test.py.",
               flush=True)
         return None
@@ -106,7 +143,8 @@ def parse_args(argv=None):
     p.add_argument("--dev-id", default=os.environ.get("NPZ_CI_DEV_ID"),
                    help="J-Link serial number, if more than one is attached (env NPZ_CI_DEV_ID)")
     p.add_argument("--sample", action="append",
-                   help="only run this sample (repeatable); default: all with ci/test.py")
+                   help="only run this sample, or variant such as sensor_bme280.shadow "
+                        "(repeatable); default: all with ci/test.py, every variant")
     p.add_argument("--ad3", action="store_true", default=bool(os.environ.get("NPZ_CI_AD3")),
                    help="erase and power-cycle the bench with the AD3 before each sample (env NPZ_CI_AD3)")
     p.add_argument("--i2c", nargs="?", const="6,7", default=os.environ.get("NPZ_CI_AD3_I2C"),
@@ -138,10 +176,13 @@ def main(argv=None):
         return 1
 
     results = {}
-    for test_path in tests:
-        name = test_path.parents[1].name
-        print(f"\n#### {name} ####", flush=True)
-        results[name] = run_sample(test_path, args)
+    samples = {}
+    for variant in tests:
+        name = variant.name
+        samples[name] = variant.test_path.parents[1].name
+        configs = f" ({', '.join(variant.extra_configs)})" if variant.extra_configs else ""
+        print(f"\n#### {name}{configs} ####", flush=True)
+        results[name] = run_sample(variant, args)
 
     print("\n==================== Summary ====================", flush=True)
     for name, failures in results.items():
@@ -159,7 +200,7 @@ def main(argv=None):
             for name, failures in results.items():
                 if failures is None:
                     f.write(f"- ⚠️ **{name}**: bench test disabled, see SKIP in "
-                            f"`samples/{name}/ci/test.py`\n")
+                            f"`samples/{samples[name]}/ci/test.py`\n")
                     continue
                 f.write(f"- {'✅' if not failures else '❌'} **{name}**\n")
                 for failure in failures:

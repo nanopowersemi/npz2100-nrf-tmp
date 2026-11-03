@@ -50,12 +50,25 @@ def run(command, cwd=REPO_ROOT, quiet=False):
     return result.stdout
 
 
-def build(sample_dir, board, build_dir, quiet=False):
-    """Builds a sample with scripts/ci/ci.conf added. With quiet, only the
-    memory usage table is shown, unless the build fails."""
+def build(sample_dir, board, build_dir, quiet=False, extra_configs=()):
+    """Builds a sample with scripts/ci/ci.conf added, plus extra_configs
+    (Kconfig lines such as "CONFIG_NPZ2100_SHADOW=y", from a sample.yaml
+    test variant). With quiet, only the memory usage table is shown, unless
+    the build fails."""
+    conf_files = [CI_CONF.as_posix()]
+    if extra_configs:
+        # Written to a fragment beside the build directory and added after
+        # ci.conf, so the variant reaches the application image (not
+        # sysbuild) the same way ci.conf does.
+        variant_conf = Path(f"{build_dir}.conf")
+        variant_conf.parent.mkdir(parents=True, exist_ok=True)
+        variant_conf.write_text("".join(f"{c}\n" for c in extra_configs), encoding="utf-8")
+        conf_files.append(variant_conf.as_posix())
     out = run(["west", "build", "-p", "always", "-b", board, "-d", build_dir, sample_dir,
-               "--", f"-DEXTRA_CONF_FILE={CI_CONF.as_posix()}"],
+               "--", f"-DEXTRA_CONF_FILE={';'.join(conf_files)}"],
               quiet=quiet)
+    if extra_configs:
+        _check_kconfig(sample_dir, build_dir, extra_configs)
     if quiet:
         lines = _ANSI.sub("", out).splitlines()
         start = next((i for i, l in enumerate(lines) if l.startswith("Memory region")), None)
@@ -65,6 +78,32 @@ def build(sample_dir, board, build_dir, quiet=False):
                 end += 1
             print("\n".join(lines[start:end]), flush=True)
         print("Build successful", flush=True)
+
+
+def _check_kconfig(sample_dir, build_dir, extra_configs):
+    """Exits if a variant's Kconfig did not end up in the build, e.g. a
+    symbol whose dependencies are not met, so the variant never silently
+    tests the default configuration."""
+    build_dir = Path(build_dir)
+    # With sysbuild the application is in a subdirectory named after it.
+    dot_config = next((p for p in (build_dir / Path(sample_dir).name / "zephyr" / ".config",
+                                   build_dir / "zephyr" / ".config") if p.is_file()), None)
+    if dot_config is None:
+        print(f"No zephyr/.config found in {build_dir}", flush=True)
+        sys.exit(1)
+    lines = set(dot_config.read_text(encoding="utf-8", errors="replace").splitlines())
+    missing = []
+    for c in extra_configs:
+        name, _, value = c.partition("=")
+        if value == "n":
+            if f"{name}=y" in lines:
+                missing.append(c)
+        elif c not in lines:
+            missing.append(c)
+    if missing:
+        print(f"Not set in {dot_config}: {', '.join(missing)}", flush=True)
+        sys.exit(1)
+    print(f"Variant Kconfig set: {', '.join(extra_configs)}", flush=True)
 
 
 def flash(build_dir, dev_id=None, no_rebuild=False):

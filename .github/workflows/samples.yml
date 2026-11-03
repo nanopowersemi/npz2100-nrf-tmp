@@ -105,6 +105,13 @@ jobs:
         if: ${{ !cancelled() && steps.bench.outcome == 'success' }}
         run: python -u scripts/ci/run_samples.py --sample sensor_bme280
 
+      # The same sample built with CONFIG_NPZ2100_SHADOW=y (the .shadow test
+      # in its sample.yaml), so the driver is tested with and without the
+      # register shadow.
+      - name: Test sensor_bme280 (SHADOW)
+        if: ${{ !cancelled() && steps.bench.outcome == 'success' }}
+        run: python -u scripts/ci/run_samples.py --sample sensor_bme280.shadow
+
       # No sensor_bmp280 step: there is no BMP280 on the bench. It is still
       # built by twister above.
 

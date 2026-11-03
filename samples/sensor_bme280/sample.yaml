@@ -23,3 +23,9 @@ common:
       - "Peripheral 1 wake"
 tests:
   sample.npz2100.sensor_bme280: {}
+  # Same sample with the driver register shadow on: every boot reads back
+  # all nPZ2100 registers and writes only the ones that differ from the
+  # device. run_samples.py runs it on the bench as sensor_bme280.shadow.
+  sample.npz2100.sensor_bme280.shadow:
+    extra_configs:
+      - CONFIG_NPZ2100_SHADOW=y

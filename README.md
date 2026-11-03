@@ -460,7 +460,15 @@ The steps are also available one at a time, as in github-runner-test:
 
 Add `--short-build-path` to twister on Windows. Add `--sample <name>` to
 `run_samples.py` to test one sample, or run `samples/<name>/ci/test.py` with
-the same arguments. `--build-only` skips flashing. To disable a bench test for a while, set
+the same arguments.
+
+Each test in a sample's `sample.yaml` is also a bench variant, checked by
+the same `ci/test.py`. The first test is the default (`--sample
+sensor_bme280`); each other one is named after the last part of its test
+name and built to `build/ci/<sample>.<variant>` with its `extra_configs`
+added (`--sample sensor_bme280.shadow` builds with
+`CONFIG_NPZ2100_SHADOW=y`). The build stops if a variant's Kconfig does not
+end up in the build's `.config`. Without `--sample`, every variant runs. `--build-only` skips flashing. To disable a bench test for a while, set
 `SKIP = "<reason>"` in its `ci/test.py`: the sample is still built, and the
 CI run shows a warning until `SKIP` is removed (`--no-skip` runs it anyway). The build output is only shown if a build
 fails; add `--verbose` to always show it. Leave out `--ad3` (and

@@ -58,6 +58,17 @@ add a build configuration for `nrf52dk/nrf52832`, `nrf52833dk/nrf52833` or
 `npz2100_module/boards/shields/npz2100/` is selected in `CMakeLists.txt`,
 so no extra build arguments are needed.
 
+## Register shadow variant
+
+`sample.yaml` has a second test, `sample.npz2100.sensor_bme280.shadow`,
+that builds the sample with `CONFIG_NPZ2100_SHADOW=y`. The driver then
+reads back every nPZ2100 register on each boot and writes only the ones
+that differ from the device, instead of the ones that differ from the reset
+default. The log and the expected behaviour are the same, so the bench runs
+both with the same `ci/test.py` (`run_samples.py --sample sensor_bme280` and
+`--sample sensor_bme280.shadow`). To try it in a VS Code build, add
+`CONFIG_NPZ2100_SHADOW=y` to `prj.conf`.
+
 ## Expected output
 
 ```
