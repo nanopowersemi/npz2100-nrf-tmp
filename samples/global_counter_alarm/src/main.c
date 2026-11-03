@@ -44,6 +44,7 @@
 
 #include <drivers/npz2100.h>
 #include "npz2100_regmap.h"
+#include "sample_log_color.h"
 
 LOG_MODULE_REGISTER(app, LOG_LEVEL_INF);
 
@@ -118,7 +119,7 @@ static int gct_first_boot_setup(void)
 		.wdog_enable   = false,
 	};
 
-	LOG_INF("First boot - counter set to %u s, alarm at %u s",
+	LOG_INF_HL(SLC_MAGENTA, "First boot - counter set to %u s, alarm at %u s",
 		timer.gct_seconds, timer.alarm_seconds);
 
 	const npz2100_config_t *s = npz2100_get_shadow(npz2100);
@@ -163,13 +164,13 @@ static void gct_status_print(const struct gct_status *st)
 	uint32_t ms = ((uint32_t)st->frac * 625u) / 10u;
 
 	if (!st->alarm_en) {
-		LOG_INF("Counter: %u.%03u s, alarm off (was %u s)",
+		LOG_INF_HL(SLC_GREEN, "Counter: %u.%03u s, alarm off (was %u s)",
 			st->seconds, ms, st->alarm);
 	} else if (st->seconds < st->alarm) {
-		LOG_INF("Counter: %u.%03u s, alarm at %u s (in %u s)",
+		LOG_INF_HL(SLC_GREEN, "Counter: %u.%03u s, alarm at %u s (in %u s)",
 			st->seconds, ms, st->alarm, st->alarm - st->seconds);
 	} else {
-		LOG_INF("Counter: %u.%03u s, alarm at %u s (due)",
+		LOG_INF_HL(SLC_GREEN, "Counter: %u.%03u s, alarm at %u s (due)",
 			st->seconds, ms, st->alarm);
 	}
 }
@@ -187,7 +188,7 @@ int main(void)
 	npz2100_wake_reason_t reason;
 	struct gct_status st;
 
-	LOG_INF("--- nPZ2100 global counter alarm sample boot ---");
+	LOG_INF_HL(SLC_CYAN, "--- nPZ2100 global counter alarm sample boot ---");
 
 	if (!device_is_ready(npz2100)) {
 		LOG_ERR("nPZ2100 device not ready");
@@ -254,11 +255,11 @@ int main(void)
 	/* 5. Handle the wake reason.                                          */
 	/* ------------------------------------------------------------------ */
 	if (reason.timeout) {
-		LOG_INF("Periodic time-out wake");
+		LOG_INF_HL(SLC_BLUE, "Periodic time-out wake");
 	}
 
 	if (reason.alarm) {
-		LOG_INF("Global counter alarm fired");
+		LOG_INF_BANNER("Global counter alarm fired");
 
 		/* One-shot: disable the alarm so it does not wake again. */
 		ret = gct_alarm_disable();
@@ -277,7 +278,7 @@ idle:
 	/*    LOG_PANIC() flushes the deferred log buffer first so no output  */
 	/*    is lost when power is cut.                                       */
 	/* ------------------------------------------------------------------ */
-	LOG_INF("Returning to idle - next wake in 5 s");
+	LOG_INF_HL(SLC_GRAY, "Returning to idle - next wake in 5 s");
 	LOG_PANIC();
 
 	ret = npz2100_enter_idle(npz2100);
