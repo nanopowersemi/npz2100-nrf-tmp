@@ -17,7 +17,7 @@ const unsigned char npz2100_regmap[] = {
   0x5A, // IOCFG2 = 0x5A
   0xFF, // IOCFG3 = 0xFF
   0x00, // IOCFG4 = 0x00
-  0x18, // IOCFG5 = 0x18
+  0x1C, // IOCFG5 = 0x1C (I2C_PUP_EN=1, I2C_PUP_AUTO=1, SPI_AUTO=1, PSW_SR=0)
   0x0C, // SYSCFG1 = 0x0C
   0x00, // SYSCFG2 = 0x00
   0xC0, 0x03, // (TOUT_L/TOUT_H)
