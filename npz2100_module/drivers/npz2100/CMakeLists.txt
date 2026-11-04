@@ -22,6 +22,11 @@
 #                        SRAM log extraction, entry parsing,
 #                        rotation handling, log clear.
 #
+#   npz2100_dump.c     - Platform-agnostic register dump
+#                        (CONFIG_NPZ2100_DUMP): streams all readable
+#                        registers (global + 6 peripheral banks) to a
+#                        callback, no shadow.
+#
 # The platform-agnostic files must NOT include any Zephyr headers.
 # All Zephyr coupling is in npz2100_zephyr.c only.
 
@@ -39,6 +44,9 @@ zephyr_library_sources(
     npz2100_lib.c
     npz2100_datalog.c
 )
+
+# Platform-agnostic register dump (debug only).
+zephyr_library_sources_ifdef(CONFIG_NPZ2100_DUMP npz2100_dump.c)
 
 # Zephyr device-model wrapper (all Zephyr API calls live here).
 zephyr_library_sources(npz2100_zephyr.c)

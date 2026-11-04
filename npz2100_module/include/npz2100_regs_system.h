@@ -284,6 +284,34 @@ extern "C" {
 #define NPZ2100_PA_SRC_ADC2               (0x05u)
 #define NPZ2100_PA_SRC_ADC3               (0x06u)
 
+/* =========================================================================
+ * UUID access registers
+ *
+ * The nPZ2100 UUID is a 4-byte factory-programmed unique identifier.
+ *
+ * Access sequence:
+ *   1. Write NPZ2100_UUID_UNLOCK_KEY (0x74) to NPZ2100_REG_UUID_UNLOCK (0x6F)
+ *   2. Read 4 bytes from NPZ2100_REG_UUID_0 (0x76) .. NPZ2100_REG_UUID_3 (0x79)
+ *
+ * npz2100_read_uuid_ll() writes the unlock key on every call.
+ * NOTE: these registers are not described in datasheet V0.8.
+ * ======================================================================= */
+
+/** UUID unlock register - write NPZ2100_UUID_UNLOCK_KEY to enable UUID read. */
+#define NPZ2100_REG_UUID_UNLOCK           (0x6Fu)
+
+/** Value to write to NPZ2100_REG_UUID_UNLOCK to enable UUID access. */
+#define NPZ2100_UUID_UNLOCK_KEY           (0x74u)
+
+/** UUID bytes - 4 consecutive read-only registers (burst-readable). */
+#define NPZ2100_REG_UUID_0                (0x76u)  /**< UUID byte 0 (first byte read) */
+#define NPZ2100_REG_UUID_1                (0x77u)  /**< UUID byte 1       */
+#define NPZ2100_REG_UUID_2                (0x78u)  /**< UUID byte 2       */
+#define NPZ2100_REG_UUID_3                (0x79u)  /**< UUID byte 3 (last byte read)  */
+
+/** Length of the UUID in bytes. */
+#define NPZ2100_UUID_LEN                  (4u)
+
 #ifdef __cplusplus
 }
 #endif

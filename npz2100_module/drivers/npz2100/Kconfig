@@ -66,4 +66,13 @@ config NPZ2100_SHADOW
 
 	  Maps to the C preprocessor symbol NPZ2100_SHADOW_ENABLE.
 
+config NPZ2100_DUMP
+	bool "Register dump for debugging"
+	help
+	  Adds npz2100_dump_registers(), which reads every readable nPZ2100
+	  register from the device (optionally STA1-STA3 and the 256-byte
+	  SRAM too) and logs it as a hex table at INF level.  It reads the
+	  live device, not the shadow, so it works with either shadow mode.
+	  Intended for bench work; leave it off in production builds.
+
 endif # NPZ2100

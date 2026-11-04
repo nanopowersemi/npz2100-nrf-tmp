@@ -89,8 +89,8 @@
  * @author  Nanopower Semiconductor AS
  */
 
-#ifndef NPZ2100_MID_H
-#define NPZ2100_MID_H
+#ifndef NPZ2100_LIB_H
+#define NPZ2100_LIB_H
 
 /* =========================================================================
  * Shadow feature compile-time switch
@@ -431,6 +431,14 @@ npz2100_err_t npz2100_config_init_defaults(npz2100_config_t *cfg);
  * transaction each, in stream order. A burst never crosses a read-only or
  * reserved address; P_BANK and IDLE_RST are always written on their own.
  *
+ * SRAM data: bytes at addresses 0x80 and above (the SRAM window) are the
+ * peripheral init commands. They are written after the registers, every
+ * time this function runs (the shadow does not mirror SRAM, so they cannot
+ * be diffed), in bursts of consecutive bytes. The SRAM_BANK value the stream
+ * writes before them selects their bank; SRAM_BANK is written explicitly
+ * before the first burst and cfg->sram_bank is kept in step. See
+ * npz2100_map_sram_count().
+ *
  * P_BANK (0x1F) requires no special handling - it is written like any
  * other register in the stream, and subsequent banked addresses (0x20–0x2D)
  * within the same or a later segment resolve against whatever bank was
@@ -443,7 +451,8 @@ npz2100_err_t npz2100_config_init_defaults(npz2100_config_t *cfg);
  *                          compile-time arrays).
  * @param[out]    written   Number of registers written to the device
  *                          (including the unchanged ones written as part of
- *                          a burst), or NULL if not needed.
+ *                          a burst), or NULL if not needed.  SRAM bytes
+ *                          are not included; see npz2100_map_sram_count().
  * @return NPZ2100_OK, or the first error encountered.
  *         NPZ2100_ERR_ARG if the stream is malformed (a segment's length
  *         field would read past the end of the buffer).
@@ -542,6 +551,19 @@ uint8_t npz2100_map_diff_count(const npz2100_config_t *cfg,
  * @return NPZ2100_OK if well-formed, NPZ2100_ERR_ARG if malformed.
  */
 npz2100_err_t npz2100_map_validate(const uint8_t *map, size_t map_len);
+
+/**
+ * @brief Count the SRAM-window bytes (addresses 0x80 and above) in a regmap.
+ *
+ * No I2C transaction. These bytes are written by every npz2100_map_apply()
+ * call and are not included in its @p written count or in
+ * npz2100_map_diff_count().
+ *
+ * @param[in] map      Byte-stream register map.
+ * @param[in] map_len  Total length of @p map in bytes.
+ * @return Number of SRAM-window bytes (0 if none or if the stream is malformed).
+ */
+size_t npz2100_map_sram_count(const uint8_t *map, size_t map_len);
 
 /**
  * @brief Write a single register immediately and update the shadow.
@@ -829,8 +851,23 @@ npz2100_err_t npz2100_enter_idle_ll(const npz2100_hal_t *hal);
  */
 npz2100_err_t npz2100_soft_reset_ll(const npz2100_hal_t *hal);
 
+/**
+ * @brief Read the 4-byte factory UUID from the nPZ2100.
+ *
+ * Writes NPZ2100_UUID_UNLOCK_KEY (0x74) to NPZ2100_REG_UUID_UNLOCK (0x6F),
+ * then burst-reads NPZ2100_REG_UUID_0..3 (0x76-0x79).  The unlock key is
+ * written on every call; the config struct is not touched.  uuid[0] is
+ * register 0x76 and uuid[3] register 0x79 (register order; no byte
+ * significance is assumed).  These registers are not in datasheet V0.8.
+ *
+ * @param[in]  hal   Pointer to initialised HAL descriptor.
+ * @param[out] uuid  4-byte output buffer.
+ * @return NPZ2100_OK, NPZ2100_ERR_ARG if an argument is NULL, or an I2C error.
+ */
+npz2100_err_t npz2100_read_uuid_ll(const npz2100_hal_t *hal, uint8_t uuid[4]);
+
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* NPZ2100_MID_H */
+#endif /* NPZ2100_LIB_H */

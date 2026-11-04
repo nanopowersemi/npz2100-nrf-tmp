@@ -55,6 +55,7 @@
  * application code can use NPZ2100_REG_*, npz2100_config_t, npz2100_sys_set(),
  * npz2100_periph_set(), etc. without additional includes. */
 #include "npz2100_lib.h"
+#include "npz2100_dump.h"   /* NPZ2100_DUMP_STATUS, NPZ2100_DUMP_SRAM */
 
 #ifdef __cplusplus
 extern "C" {
@@ -293,6 +294,36 @@ int npz2100_enter_idle(const struct device *dev);
  * @return 0 on success, -EIO on I²C error.
  */
 int npz2100_soft_reset(const struct device *dev);
+
+/**
+ * @brief Read the 4-byte factory UUID from the nPZ2100.
+ *
+ * Writes the unlock key 0x74 to register 0x6F, then burst-reads registers
+ * 0x76-0x79.  These registers are not described in datasheet V0.8.
+ *
+ * @param dev   Pointer to the nPZ2100 device.
+ * @param uuid  4-byte output buffer; uuid[0] is register 0x76, uuid[3] 0x79.
+ * @return 0 on success, -EINVAL if uuid is NULL, -EIO on I²C error.
+ */
+int npz2100_read_uuid(const struct device *dev, uint8_t uuid[4]);
+
+/**
+ * @brief Log every readable register as a hex table (CONFIG_NPZ2100_DUMP).
+ *
+ * Reads the live device, not the shadow, so it works in either shadow
+ * mode.  Global registers are logged as "G", the six peripheral banks
+ * (0x20-0x2F) as "P0".."P5" and, if requested, the SRAM as "S" (SRAM
+ * addresses 0x00-0xFF), at INF level.  P_BANK and SRAM_BANK are restored
+ * afterwards.  For custom output use npz2100_reg_dump() with a HAL.
+ *
+ * @param dev    Pointer to the nPZ2100 device.
+ * @param flags  0, or NPZ2100_DUMP_STATUS and/or NPZ2100_DUMP_SRAM.
+ *               NPZ2100_DUMP_STATUS adds STA1-3 (reading STA1/STA2 resets
+ *               the nPZ2100 watchdog); NPZ2100_DUMP_SRAM adds the 256-byte
+ *               SRAM (about 60 ms of bus time at 100 kHz).
+ * @return 0 on success, -EIO on I²C error.
+ */
+int npz2100_dump_registers(const struct device *dev, uint8_t flags);
 
 #ifdef __cplusplus
 }

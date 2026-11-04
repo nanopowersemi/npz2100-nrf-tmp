@@ -35,12 +35,14 @@
  *
  * Name collision resolution
  * -------------------------
- * the Zephyr public API to _ll-suffixed names before any header is included.
+ * The lib-layer functions whose names would clash with the Zephyr public API
+ * (npz2100_probe, npz2100_enter_idle, npz2100_soft_reset, npz2100_sram_write,
+ * npz2100_sram_read, npz2100_periph_read_value, npz2100_read_uuid) are
+ * declared with an _ll suffix directly in npz2100_lib.h, so both layers can
+ * be included together.
  */
 
 #define DT_DRV_COMPAT nanopower_npz2100
-
-/* Alias mid-level names before including any npz2100 header. */
 
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
@@ -381,7 +383,14 @@ int npz2100_apply_regmap(const struct device *dev,
 	k_mutex_unlock(&data->lock);
 
 	if (ret == 0) {
-		LOG_INF("apply_regmap: %u register(s) written", written);
+		size_t nsram = npz2100_map_sram_count(map, map_len);
+
+		if (nsram > 0u) {
+			LOG_INF("apply_regmap: %u register(s) written, %u SRAM byte(s)",
+				written, (unsigned int)nsram);
+		} else {
+			LOG_INF("apply_regmap: %u register(s) written", written);
+		}
 	} else {
 		LOG_ERR("apply_regmap failed: %d", ret);
 	}
@@ -534,6 +543,74 @@ int npz2100_soft_reset(const struct device *dev)
 
 	if (ret == 0) {
 		LOG_INF("nPZ2100 soft reset issued");
+	}
+	return ret;
+}
+
+#if defined(CONFIG_NPZ2100_DUMP)
+
+/* Log one dump segment: "G  0x05: 00 00 FF ..." */
+static void dump_log_cb(int8_t bank, uint8_t start, const uint8_t *data,
+			size_t len, void *user)
+{
+	ARG_UNUSED(user);
+
+	char line[NPZ2100_DUMP_PERIPH_LEN * 3u + 1u];
+	size_t pos = 0u;
+
+	for (size_t i = 0u; i < len && pos + 3u < sizeof(line); i++) {
+		pos += snprintk(&line[pos], sizeof(line) - pos, "%02X ", data[i]);
+	}
+	line[pos] = '\0';
+
+	if (bank == NPZ2100_DUMP_BANK_SRAM) {
+		LOG_INF("S  0x%02X: %s", start, line);
+	} else if (bank < 0) {
+		LOG_INF("G  0x%02X: %s", start, line);
+	} else {
+		LOG_INF("P%d 0x%02X: %s", (int)bank, start, line);
+	}
+}
+
+int npz2100_dump_registers(const struct device *dev, uint8_t flags)
+{
+	struct npz2100_data *data = dev->data;
+	int ret;
+
+	LOG_INF("--- register dump ---");
+
+	k_mutex_lock(&data->lock, K_FOREVER);
+	ret = err_to_zephyr(npz2100_reg_dump(&data->hal, flags, dump_log_cb, NULL));
+	k_mutex_unlock(&data->lock);
+
+	if (ret == 0) {
+		LOG_INF("--- end of dump ---");
+	} else {
+		LOG_ERR("dump_registers failed: %d", ret);
+	}
+	return ret;
+}
+
+#endif /* CONFIG_NPZ2100_DUMP */
+
+int npz2100_read_uuid(const struct device *dev, uint8_t uuid[4])
+{
+	if (uuid == NULL) {
+		return -EINVAL;
+	}
+
+	struct npz2100_data *data = dev->data;
+	int ret;
+
+	k_mutex_lock(&data->lock, K_FOREVER);
+	ret = err_to_zephyr(npz2100_read_uuid_ll(&data->hal, uuid));
+	k_mutex_unlock(&data->lock);
+
+	if (ret == 0) {
+		LOG_DBG("UUID: %02X:%02X:%02X:%02X",
+			uuid[0], uuid[1], uuid[2], uuid[3]);
+	} else {
+		LOG_ERR("read_uuid failed: %d", ret);
 	}
 	return ret;
 }

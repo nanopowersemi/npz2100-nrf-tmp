@@ -486,6 +486,7 @@ typedef struct {
     npz2100_config_t    *defaults;  /* Reset values, the diff reference. */
 #endif
     uint8_t              written;   /* Registers written to the device. */
+    bool                 sram_pass; /* SRAM_BANK is left to the SRAM pass. */
 
     /*
      * The pending burst: run_len registers from run_start are to be
@@ -561,6 +562,12 @@ static npz2100_err_t apply_visitor(uint8_t addr, uint8_t value, void *user)
     npz2100_config_t *cfg = ctx->cfg;
     npz2100_err_t err;
 
+    if (addr == NPZ2100_REG_SRAM_BANK && ctx->sram_pass) {
+        /* The regmap has SRAM bytes: apply_sram_bytes() selects the bank
+         * for them and leaves SRAM_BANK where the stream asks. */
+        return apply_flush(ctx);
+    }
+
     uint8_t *field = config_field(cfg, cfg->p_bank, addr);
 
     if (field == NULL) {
@@ -635,6 +642,155 @@ static npz2100_err_t apply_visitor(uint8_t addr, uint8_t value, void *user)
     return NPZ2100_OK;
 }
 
+/* =========================================================================
+ * SRAM bytes inside a regmap
+ *
+ * The configuration tool emits the peripheral init commands as part of the
+ * regmap: a segment that starts at SRAM_BANK (0x7F) and runs on into the
+ * SRAM window (0x80-0xFF), or a segment that starts inside the window. The
+ * shadow does not mirror SRAM, so these bytes cannot be diffed; they are
+ * written every time npz2100_map_apply() runs, after the registers.
+ *
+ * Consecutive bytes are written in bursts of up to NPZ2100_SRAM_RUN_MAX.
+ * The SRAM_BANK value the stream writes before the bytes selects their bank.
+ * SRAM_BANK is written explicitly before the first burst, whatever the
+ * config struct says: after a host power cycle with NPZ2100_SHADOW_ENABLE=0
+ * the struct holds the reset default, not the device's bank, and the
+ * register pass may have skipped the stream's SRAM_BANK write as unchanged.
+ * SRAM_BANK is left at the bank of the last burst and cfg->sram_bank is
+ * kept in step.
+ * ======================================================================= */
+
+/** Largest SRAM burst from a regmap; the buffer lives on the stack. */
+#define NPZ2100_SRAM_RUN_MAX  32u
+
+/** Context passed to the SRAM visitor. */
+typedef struct {
+    const npz2100_hal_t *hal;
+    npz2100_config_t    *cfg;
+    uint8_t              bank_known;   /* 1 once SRAM_BANK has been written. */
+    uint8_t              stream_bank;  /* Bank the next bytes belong to.    */
+    uint8_t              run_bank;     /* Bank of the pending run.          */
+    uint8_t              run_start;    /* I2C address of buf[1].            */
+    uint8_t              run_len;
+    uint8_t              buf[1u + NPZ2100_SRAM_RUN_MAX];
+} sram_ctx_t;
+
+/** Write the pending SRAM run, selecting its bank first if needed. */
+static npz2100_err_t sram_flush(sram_ctx_t *c)
+{
+    npz2100_err_t err;
+
+    if (c->run_len == 0u) {
+        return NPZ2100_OK;
+    }
+    if (c->bank_known == 0u || c->cfg->sram_bank != c->run_bank) {
+        err = npz2100_reg_write(c->hal, NPZ2100_REG_SRAM_BANK,
+                                NPZ2100_SRAM_BANK(c->run_bank));
+        if (err != NPZ2100_OK) {
+            c->run_len = 0u;
+            return err;
+        }
+        c->cfg->sram_bank = c->run_bank;
+        c->bank_known     = 1u;
+    }
+
+    c->buf[0] = c->run_start;
+    err = c->hal->write(c->hal->i2c_addr, c->buf,
+                        1u + (size_t)c->run_len, c->hal->ctx);
+    c->run_len = 0u;
+    return err;
+}
+
+static npz2100_err_t sram_visitor(uint8_t addr, uint8_t value, void *user)
+{
+    sram_ctx_t *c = (sram_ctx_t *)user;
+
+    if (addr == NPZ2100_REG_SRAM_BANK) {
+        /* The pending run keeps its own bank; it is flushed when the next
+         * byte does not continue it. */
+        c->stream_bank = (uint8_t)(value & NPZ2100_SRAM_BANK_MSK);
+        return NPZ2100_OK;
+    }
+    if (addr < NPZ2100_SRAM_WINDOW_BASE) {
+        return NPZ2100_OK;     /* A register; written by the register pass. */
+    }
+
+    if (c->run_len != 0u &&
+        (addr != (uint8_t)(c->run_start + c->run_len) ||
+         c->run_len >= NPZ2100_SRAM_RUN_MAX ||
+         c->run_bank != c->stream_bank)) {
+        npz2100_err_t err = sram_flush(c);
+        if (err != NPZ2100_OK) {
+            return err;
+        }
+    }
+    if (c->run_len == 0u) {
+        c->run_start = addr;
+        c->run_bank  = c->stream_bank;
+    }
+    c->buf[1u + c->run_len] = value;
+    c->run_len++;
+    return NPZ2100_OK;
+}
+
+static npz2100_err_t sram_count_visitor(uint8_t addr, uint8_t value, void *user)
+{
+    (void)value;
+    if (addr >= NPZ2100_SRAM_WINDOW_BASE) {
+        (*(size_t *)user)++;
+    }
+    return NPZ2100_OK;
+}
+
+size_t npz2100_map_sram_count(const uint8_t *map, size_t map_len)
+{
+    size_t n = 0u;
+
+    if (map == NULL || map_len == 0u) {
+        return 0u;
+    }
+    if (map_walk(map, map_len, sram_count_visitor, &n) != NPZ2100_OK) {
+        return 0u;
+    }
+    return n;
+}
+
+/** Write the SRAM-window bytes of a regmap to the device. */
+static npz2100_err_t apply_sram_bytes(const npz2100_hal_t *hal,
+                                      npz2100_config_t    *cfg,
+                                      const uint8_t       *map,
+                                      size_t               map_len)
+{
+    if (npz2100_map_sram_count(map, map_len) == 0u) {
+        return NPZ2100_OK;     /* Common case: no SRAM data, no bus traffic. */
+    }
+
+    sram_ctx_t c;
+    c.hal         = hal;
+    c.cfg         = cfg;
+    c.bank_known  = 0u;
+    c.stream_bank = (uint8_t)(cfg->sram_bank & NPZ2100_SRAM_BANK_MSK);
+    c.run_bank    = c.stream_bank;
+    c.run_start   = 0u;
+    c.run_len     = 0u;
+
+    npz2100_err_t err = map_walk(map, map_len, sram_visitor, &c);
+    if (err == NPZ2100_OK) {
+        err = sram_flush(&c);
+    }
+
+    /* A trailing SRAM_BANK write with no bytes after it is still honoured. */
+    if (err == NPZ2100_OK && cfg->sram_bank != c.stream_bank) {
+        err = npz2100_reg_write(hal, NPZ2100_REG_SRAM_BANK,
+                                NPZ2100_SRAM_BANK(c.stream_bank));
+        if (err == NPZ2100_OK) {
+            cfg->sram_bank = c.stream_bank;
+        }
+    }
+    return err;
+}
+
 npz2100_err_t npz2100_map_apply(const npz2100_hal_t *hal,
                                  npz2100_config_t    *cfg,
                                  const uint8_t        *map,
@@ -646,6 +802,7 @@ npz2100_err_t npz2100_map_apply(const npz2100_hal_t *hal,
     }
 
     apply_ctx_t ctx = { .hal = hal, .cfg = cfg, .written = 0u,
+                        .sram_pass = (npz2100_map_sram_count(map, map_len) > 0u),
                         .run_len = 0u, .gap = 0u, .must_end = -1 };
 #if !NPZ2100_SHADOW_ENABLE
     /* Static rather than on the stack: map_apply() runs on the caller's
@@ -658,6 +815,12 @@ npz2100_err_t npz2100_map_apply(const npz2100_hal_t *hal,
     npz2100_err_t err = map_walk(map, map_len, apply_visitor, &ctx);
     if (err == NPZ2100_OK) {
         err = apply_flush(&ctx);
+    }
+
+    /* SRAM-window bytes (peripheral init commands): not in the shadow,
+     * so written every time, after the registers. */
+    if (err == NPZ2100_OK) {
+        err = apply_sram_bytes(hal, cfg, map, map_len);
     }
 
     if (written != NULL) {
@@ -1389,4 +1552,21 @@ npz2100_err_t npz2100_soft_reset_ll(const npz2100_hal_t *hal)
     }
     return npz2100_reg_write(hal, NPZ2100_REG_IDLE_RST,
                               NPZ2100_IDLE_RST_SOFT_RESET);
+}
+
+/* -------------------------------------------------------------------------*/
+
+npz2100_err_t npz2100_read_uuid_ll(const npz2100_hal_t *hal, uint8_t uuid[4])
+{
+    if (hal == NULL || uuid == NULL) {
+        return NPZ2100_ERR_ARG;
+    }
+
+    npz2100_err_t err = npz2100_reg_write(hal, NPZ2100_REG_UUID_UNLOCK,
+                                          NPZ2100_UUID_UNLOCK_KEY);
+    if (err != NPZ2100_OK) {
+        return err;
+    }
+    return npz2100_reg_burst_read(hal, NPZ2100_REG_UUID_0, uuid,
+                                  NPZ2100_UUID_LEN);
 }
