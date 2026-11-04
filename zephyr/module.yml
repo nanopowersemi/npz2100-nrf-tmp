@@ -1,0 +1,23 @@
+# Copyright (c) Nanopower Semiconductor AS
+# SPDX-License-Identifier: Apache-2.0
+#
+# zephyr/module.yml (repository root)
+# -----------------------------------
+# Lets west find the nPZ2100 module when this repository is listed as a
+# project in the workspace west.yml. West only looks for zephyr/module.yml
+# at a project's root, so this file points into npz2100_module/.
+#
+# npz2100_module/zephyr/module.yml stays, so npz2100_module/ still works on
+# its own through ZEPHYR_EXTRA_MODULES, as the samples use it. Both files
+# use the name "npz2100", and Zephyr keeps one module per name, so having
+# both registered at once is fine. Keep the two files in sync.
+
+name: npz2100
+
+build:
+  cmake: npz2100_module
+  kconfig: npz2100_module/Kconfig
+
+  settings:
+    dts_root: npz2100_module    # npz2100_module/dts/bindings/
+    board_root: npz2100_module  # npz2100_module/boards/<vendor>/<board>/ and boards/shields/
