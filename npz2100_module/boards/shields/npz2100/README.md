@@ -37,7 +37,9 @@ Supported boards with board-specific overlays:
 - `nrf52840dk/nrf52840`
 
 Other boards with an Arduino-header I²C bus (`arduino_i2c`) work with the
-generic overlay alone. For a board without one, add
+generic overlay alone. This includes the nPZ2100 DK
+(`npz2100dk/nrf52833`), whose board devicetree already has the nPZ2100
+node on I²C0 and also labels that bus `arduino_i2c`. For a board without one, add
 `boards/<board>.overlay` here that defines the `npz2100` node on the right
 I²C controller, or put the node in the application's own overlay.
 

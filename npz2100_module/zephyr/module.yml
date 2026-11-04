@@ -1,18 +1,21 @@
 # Copyright (c) Nanopower Semiconductor AS
 # SPDX-License-Identifier: Apache-2.0
 #
-# zephyr/module.yml
-# -----------------
-# Declares this repository as a Zephyr module for NCS 3.0.2 / Zephyr ~3.7.
+# npz2100_module/zephyr/module.yml
+# --------------------------------
+# Declares npz2100_module/ as a Zephyr module for NCS v3.3.4.
 #
-# West discovers this file automatically when the module is listed in the
-# workspace west.yml (see docs/zephyr-integration.mdx).  The build system
-# then:
+# The samples register this directory through ZEPHYR_EXTRA_MODULES, which
+# also works when npz2100_module/ is copied on its own. When the repository
+# is listed in the workspace west.yml, west uses ../../zephyr/module.yml at
+# the repository root instead; it points here, has the same name, and the
+# two must be kept in sync. The build system then:
 #   - Adds  drivers/npz2100/  to the CMake source tree (via CMakeLists.txt).
 #   - Adds  dts/bindings/      to the devicetree binding search path.
 #   - Adds  include/           to the compiler include search path.
 #   - Adds  Kconfig             to the top-level Kconfig source chain.
-#   - Adds  boards/shields/     to the shield search path (--shield npz2100).
+#   - Adds  boards/             to the board and shield search paths
+#                               (npz2100dk board, npz2100 shield).
 
 name: npz2100
 
@@ -23,4 +26,4 @@ build:
   # Additional source roots exposed to the build system.
   settings:
     dts_root: .       # dts/bindings/ beneath this root is searched for .yaml.
-    board_root: .     # boards/shields/ beneath this root is searched for shields.
+    board_root: .     # boards/<vendor>/<board>/ and boards/shields/ beneath this root.

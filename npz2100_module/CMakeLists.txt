@@ -4,7 +4,7 @@
 # CMakeLists.txt  (module root)
 # ------------------------------
 # Entry point for the Zephyr build system when this repository is used as a
-# West module under NCS 3.0.2.
+# West module under NCS v3.3.4.
 #
 # Zephyr's module infrastructure calls add_subdirectory() on the path declared
 # in zephyr/module.yml cmake: field (this file's directory).  We forward into

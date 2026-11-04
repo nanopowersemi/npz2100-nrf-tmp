@@ -1,6 +1,6 @@
 # nPZ2100 - nRF Connect SDK Driver Package
 
-**Target:** nRF Host Chip · **SDK:** NCS 3.0.2 · **IDE:** VS Code + nRF Connect extension
+**Target:** nRF Host Chip · **SDK:** NCS v3.3.4 · **IDE:** VS Code + nRF Connect extension
 
 ---
 
@@ -9,8 +9,9 @@
 ```
 npz2100_ncs/
 ├── README.md                    ← This file
+├── zephyr/module.yml            ← Module declaration west uses (points into npz2100_module/)
 ├── npz2100_module/              ← Zephyr driver module (add once, reference forever)
-│   ├── zephyr/module.yml        ← West module declaration
+│   ├── zephyr/module.yml        ← Module declaration for ZEPHYR_EXTRA_MODULES
 │   ├── CMakeLists.txt
 │   ├── Kconfig
 │   ├── drivers/npz2100/
@@ -24,9 +25,10 @@ npz2100_ncs/
 │   │   ├── vendor-prefixes.txt  ← Registers the "nanopower" DT vendor prefix
 │   │   └── misc/
 │   │       └── nanopower,npz2100.yaml
+│   ├── boards/nanopower/npz2100dk/ ← nPZ2100 DK board (npz2100dk/nrf52833)
 │   ├── boards/shields/npz2100/  ← nPZero shield (selected in each sample's CMakeLists.txt)
 │   │   ├── npz2100.overlay      ← nPZ2100 node on the Arduino I²C bus
-│   │   ├── boards/<board>.overlay ← Board-specific additions (nRF52833/52840 DK)
+│   │   ├── boards/<board>.overlay ← Board-specific additions (nRF52/52833/52840 DK)
 │   │   ├── Kconfig.shield
 │   │   ├── Kconfig.defconfig
 │   │   ├── shield.yml
@@ -65,11 +67,11 @@ npz2100_ncs/
 |------|---------|----------|
 | VS Code | Any recent | https://code.visualstudio.com |
 | nRF Connect for VS Code extension pack | Latest | VS Code Extensions Marketplace |
-| nRF Connect SDK | **3.0.2** | Installed via nRF Connect for VS Code |
-| nRF Host Chip DK or custom board | Any NCS-supported nRF Host Chip | https://www.nordicsemi.com |
+| nRF Connect SDK | **v3.3.4** | Installed via nRF Connect for VS Code |
+| nRF Host Chip DK, nPZ2100 DK or custom board | Any NCS-supported nRF Host Chip | https://www.nordicsemi.com |
 
 Install the nRF Connect SDK through the **nRF Connect for VS Code** extension:
-`View → Extensions → nRF Connect for VS Code → Install SDK 3.0.2`
+`View → Extensions → nRF Connect for VS Code → Install SDK v3.3.4`
 
 ---
 
@@ -105,8 +107,9 @@ VS Code will detect the nRF Connect application structure automatically.
 In the **nRF Connect** sidebar panel:
 
 1. Click **+ Add Build Configuration**
-2. Board: select your target (e.g. `nrf52833dk/nrf52833`, `nrf5340dk/nrf5340/cpuapp`, `nrf9160dk/nrf9160`)
-3. SDK: `3.0.2`
+2. Board: select your target (`nrf52dk/nrf52832`, `nrf52833dk/nrf52833`,
+   `nrf52840dk/nrf52840`, or `npz2100dk/nrf52833` - see **nPZ2100 DK** below)
+3. SDK: `v3.3.4`
 4. Leave all other settings at default
 5. Click **Build Configuration**
 
@@ -115,7 +118,7 @@ The `CMakeLists.txt` in `samples/sensor_bme280/` registers `npz2100_module/` via
 > **nPZero shield:** The nPZ2100 devicetree node and Kconfig defaults come from
 > the `npz2100` shield in `npz2100_module/boards/shields/npz2100/`, so samples
 > carry no board overlays of their own. The shield has board-specific overlays
-> for the nRF52833 DK and nRF52840 DK, and works on any board with an
+> for the nRF52 DK, nRF52833 DK and nRF52840 DK, and works on any board with an
 > Arduino-header I²C bus (`arduino_i2c`). See **Supporting another board** below.
 >
 > From the terminal:
@@ -166,20 +169,118 @@ In the nRF Connect panel:
 2. Click **Flash** once the build completes
 3. Open **RTT Viewer** or the **Serial Terminal** to see output
 
-Expected first-boot output:
+Expected first-boot output (abbreviated; timestamps and counts vary):
 
 ```
 [00:00:00.008] <inf> npz2100: nPZ2100 ready on i2c@40003000 @ 0x3c
-[00:00:00.012] <inf> app: --- nPZ2100 sample boot ---
+[00:00:00.012] <inf> app: --- nPZ2100 BME280 sample boot ---
 [00:00:00.015] <inf> npz2100: boot_status: STA1=0x00 STA2=0x00 STA3=0x00
 [00:00:00.016] <inf> npz2100:   reset_src: Power-on reset (0x00)
 [00:00:00.031] <inf> npz2100: apply_regmap: 18 register(s) written
-[00:00:00.034] <inf> app: Returning to idle - nRF Host Chip power will be cut
-[00:00:00.036] <inf> npz2100: Entering idle - nRF Host Chip power will be cut
+[00:00:00.034] <inf> app: Returning to idle
+[00:00:00.036] <inf> npz2100: Entering idle - nRF52833 power will be cut
 ```
 
 If you see `nPZ2100 not found`, check your SDA/SCL wiring and verify the
 I²C address matches the `reg = <0x3c>` in the shield overlay.
+
+---
+
+## nPZ2100 DK
+
+The nPZ2100 DK (rev 1V0) has the nPZ2100 and its host on one board, so it
+needs no shield wiring. It has its own board definition in
+`npz2100_module/boards/nanopower/npz2100dk/`; the build target is
+`npz2100dk/nrf52833`.
+
+### Hardware
+
+| Function | Connection |
+|----------|------------|
+| Host | Fanstel BC833M module (nRF52833), powered from VDD_HP, which the nPZ2100 switches |
+| I²C0 | SCL P0.10, SDA P0.11, 100 kHz. nPZ2100 at 0x3C; AS6214 temperature sensor at 0x48 (connect with J12/J13). 2.2 k pull-ups to VDD_HP with jumper J14 |
+| UART0 (console) | Isolated FT231X USB-UART, 115200 baud: TX P0.05, RX P0.03, RTS P0.09, CTS P0.04 (flow control not enabled by default) |
+| Status LED | LED1 "STS_LED" on P0.02, active high (`led0`) |
+| Reset | P0.18 as nRESET: SW1 "DFU Reset" and the J8 debug header |
+| Debug | SWD on J8 |
+
+The board enables the DC/DC regulator (its inductors are on the BC833M),
+uses the module's 32.768 kHz crystal, and sets the NFC pins as GPIOs
+because P0.09 and P0.10 are used.
+
+### Setting up NCS v3.3.4 for the DK
+
+The samples use sysbuild, which looks up the board before a sample's
+`CMakeLists.txt` registers the module. So the module has to be in the
+workspace `west.yml`, or the board root passed on the command line (see
+the end of this section).
+
+1. In the NCS manifest, `<ncs>/v3.3.4/nrf/west.yml`, add a remote under
+   `remotes:` and a project under `projects:`:
+
+   ```yaml
+   remotes:
+     - name: nanopowersemi
+       url-base: https://github.com/nanopowersemi
+
+   projects:
+     - name: npz2100
+       remote: nanopowersemi
+       repo-path: npz2100-nrf-internal
+       path: modules/npz2100
+       revision: main
+   ```
+
+   The repository is private, so you need GitHub access to it. The
+   `path` can be anywhere inside the workspace.
+
+2. From the workspace, clone it:
+
+   ```
+   west update npz2100
+   ```
+
+3. Check that the board is found. This should list `npz2100dk`:
+
+   ```
+   west boards -n npz2100
+   ```
+
+4. Build and flash a sample:
+
+   ```
+   west build -p always -b npz2100dk/nrf52833 -d build_npz2100dk modules/npz2100/samples/watchdog
+   west flash -d build_npz2100dk
+   ```
+
+   Flash through J8 with a J-Link (or a DK's debug-out). `board.cmake`
+   sets up the nrfutil, nrfjprog, J-Link and pyOCD runners.
+
+In VS Code, open a sample folder, add a build configuration and select
+`npz2100dk/nrf52833` as the board. The extension uses the same west
+workspace, so the board is listed after step 2.
+
+Without editing `west.yml`, clone the repository anywhere and give the
+board root on every build:
+
+```
+west build -p always -b npz2100dk/nrf52833 <repo>/samples/watchdog -- -DBOARD_ROOT=<repo>/npz2100_module
+```
+
+### Samples on the DK
+
+All samples build for `npz2100dk/nrf52833`.
+
+| Sample | On the bare DK |
+|--------|----------------|
+| `global_counter_alarm` | Runs |
+| `watchdog` | Runs |
+| `sensor_bme280` | Needs an external BME280 on I²C0 (P0.11 SDA, P0.10 SCL) |
+| `sensor_bmp280` | Needs an external BMP280 on I²C0 (P0.11 SDA, P0.10 SCL) |
+
+The `npz2100` shield is still applied, as on every board. The DK's
+devicetree also labels I²C0 as `arduino_i2c`, so the shield overlay lands
+on the same nPZ2100 node.
 
 ---
 
@@ -317,17 +418,16 @@ list(APPEND SHIELD npz2100)
 
 ### Option B - west.yml (production, recommended)
 
-Add the module as a West project and run `west update`:
+Add this repository as a west project, as in **nPZ2100 DK** above (the
+`nanopowersemi` remote, `repo-path: npz2100-nrf-internal`, `revision:
+main`), and run `west update npz2100`. West reads `zephyr/module.yml` at
+the repository root, which points into `npz2100_module/`.
 
-```yaml
-projects:
-  - name: npz2100
-    url: https://github.com/nanopowersemi/npz2100-zephyr  # your repo URL
-    revision: v1.0.0
-    path: modules/npz2100
-```
-
-Then remove the `ZEPHYR_EXTRA_MODULES` line from `CMakeLists.txt`.
+With the module in `west.yml`, the `ZEPHYR_EXTRA_MODULES` line in
+`CMakeLists.txt` can be removed, and `--shield npz2100` and the
+`npz2100dk` board work from the command line. Leaving the line in is
+harmless: both module declarations use the name `npz2100`, and Zephyr
+keeps one module per name.
 
 
 ---
@@ -416,6 +516,9 @@ CI has two parts:
 |------|----------------|----------------|
 | Build | `samples/*/sample.yaml`, run by twister | Every sample builds, warnings as errors, for nRF52 DK, nRF52833 DK and nRF52840 DK |
 | Bench test | `samples/*/ci/test.py`, run by `scripts/ci/run_samples.py` | The sample is flashed to the bench board and its UART log is checked |
+
+The samples' `sample.yaml` also lists `npz2100dk/nrf52833`, but CI names
+its boards with `-p`, so it does not build for the nPZ2100 DK.
 
 The bench is an nRF52 DK wired to an nPZ2100, with an Analog Discovery 3
 (AD3) supplying power. `.github/workflows/samples.yml` runs both parts on
@@ -508,6 +611,7 @@ can be set with `NPZ_CI_AD3_LA_RATE`.
 | Build error: `DT_HAS_NANOPOWER_NPZ2100_ENABLED` undefined, or `DT_N_NODELABEL_npz2100` undeclared | Shield not selected | Add `list(APPEND SHIELD npz2100)` to `CMakeLists.txt` |
 | Build error: `No shield named 'npz2100' found` | Shield passed with `--shield` under sysbuild, or wrong module path | Select the shield in `CMakeLists.txt` instead; verify the `npz2100_module/` path |
 | Build error: `undefined node label 'arduino_i2c'` | Board has no Arduino I²C bus | Add a shield board overlay, see **Supporting another board** |
+| Build error: `No board named 'npz2100dk' found` | Module not in the workspace `west.yml` | Add it, see **nPZ2100 DK**, or pass `-DBOARD_ROOT=<repo>/npz2100_module` |
 | `apply_regmap: malformed byte stream` | Wrong `length` in regmap | Check segment framing: `length = 1 (start_addr) + N (data bytes)` |
 | nRF Host Chip keeps rebooting immediately | SW_HP wired incorrectly | Verify SW_HP polarity and MOSFET circuit |
 | Shield board overlay not picked up | Wrong overlay filename | Filename must match board target string, with `/` replaced by `_` |
