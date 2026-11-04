@@ -1,0 +1,21 @@
+# Copyright (c) Nanopower Semiconductor AS
+# SPDX-License-Identifier: Apache-2.0
+
+identifier: npz2100dk/nrf52833
+name: nPZ2100 DK
+vendor: nanopower
+type: mcu
+arch: arm
+toolchain:
+  - zephyr
+  - gnuarmemb
+ram: 128
+flash: 512
+supported:
+  - adc
+  - ble
+  - counter
+  - gpio
+  - i2c
+  - uart
+  - watchdog

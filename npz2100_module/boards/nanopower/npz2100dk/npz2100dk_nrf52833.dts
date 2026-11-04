@@ -1,0 +1,131 @@
+/*
+ * Copyright (c) Nanopower Semiconductor AS
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * nPZ2100 DK rev 1V0: Fanstel BC833M (nRF52833) host with an nPZ2100
+ * that switches the host supply (VDD_HP) on and off.
+ */
+
+/dts-v1/;
+#include <nordic/nrf52833_qiaa.dtsi>
+#include "npz2100dk_nrf52833-pinctrl.dtsi"
+
+/ {
+	model = "nPZ2100 DK (nRF52833)";
+	compatible = "nanopower,npz2100dk-nrf52833";
+
+	chosen {
+		zephyr,console = &uart0;
+		zephyr,shell-uart = &uart0;
+		zephyr,uart-mcumgr = &uart0;
+		zephyr,bt-mon-uart = &uart0;
+		zephyr,bt-c2h-uart = &uart0;
+		zephyr,sram = &sram0;
+		zephyr,flash = &flash0;
+		zephyr,code-partition = &slot0_partition;
+		zephyr,ieee802154 = &ieee802154;
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		led0: led_0 {
+			/* LED1 "STS_LED", driven high through R4 470R */
+			gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
+			label = "Status LED";
+		};
+	};
+
+	aliases {
+		led0 = &led0;
+		watchdog0 = &wdt0;
+	};
+};
+
+/* BC833M has the DCDC inductors on-module (Fanstel product page). */
+&reg1 {
+	regulator-initial-mode = <NRF5X_REG_MODE_DCDC>;
+};
+
+&uicr {
+	/* P0.18 is nRESET (SW1 "DFU Reset" and the J8 debug header). */
+	gpio-as-nreset;
+	/* P0.09 (UART RTS) and P0.10 (I2C SCL) are NFC pins by default. */
+	nfct-pins-as-gpios;
+};
+
+&adc {
+	status = "okay";
+};
+
+&gpiote {
+	status = "okay";
+};
+
+&gpio0 {
+	status = "okay";
+};
+
+&gpio1 {
+	status = "okay";
+};
+
+&uart0 {
+	compatible = "nordic,nrf-uarte";
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&uart0_default>;
+	pinctrl-1 = <&uart0_sleep>;
+	pinctrl-names = "default", "sleep";
+	/* RTS/CTS are routed; add hw-flow-control; here to use them. */
+};
+
+/* The arduino_i2c label lets the npz2100 shield overlay (which the samples
+ * always apply) land on this bus too; the DK has no Arduino header.
+ */
+arduino_i2c: &i2c0 {
+	compatible = "nordic,nrf-twim";
+	status = "okay";
+	/* nPZ2100 maximum rated I2C frequency */
+	clock-frequency = <I2C_BITRATE_STANDARD>;
+	pinctrl-0 = <&i2c0_default>;
+	pinctrl-1 = <&i2c0_sleep>;
+	pinctrl-names = "default", "sleep";
+
+	npz2100: npz2100@3c {
+		compatible = "nanopower,npz2100";
+		reg = <0x3c>;
+	};
+
+	/* AS6214 temperature sensor at 0x48 (connect with J12/J13) can be
+	 * added here once a driver binding is chosen.
+	 */
+};
+
+&ieee802154 {
+	status = "okay";
+};
+
+&flash0 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		boot_partition: partition@0 {
+			label = "mcuboot";
+			reg = <0x00000000 0x0000c000>;
+		};
+		slot0_partition: partition@c000 {
+			label = "image-0";
+			reg = <0x0000c000 0x00037000>;
+		};
+		slot1_partition: partition@43000 {
+			label = "image-1";
+			reg = <0x00043000 0x00037000>;
+		};
+		storage_partition: partition@7a000 {
+			label = "storage";
+			reg = <0x0007a000 0x00006000>;
+		};
+	};
+};

@@ -1,0 +1,12 @@
+# Copyright (c) Nanopower Semiconductor AS
+# SPDX-License-Identifier: Apache-2.0
+#
+# HWMv2 board definition for the nPZ2100 DK (Fanstel BC833M / nRF52833).
+# Build target: npz2100dk/nrf52833
+
+board:
+  name: npz2100dk
+  full_name: nPZ2100 DK
+  vendor: nanopower
+  socs:
+    - name: nrf52833
