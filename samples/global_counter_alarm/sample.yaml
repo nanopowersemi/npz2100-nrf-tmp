@@ -3,13 +3,16 @@ sample:
   description: Global time counter, one-shot alarm and 5 s periodic wake
 common:
   tags: npz2100
-  # Boards the npz2100 shield has board overlays for.
+  # Boards the npz2100 shield has board overlays for, plus the nPZ2100 DK
+  # (npz2100_module/boards/nanopower/npz2100dk/).
   platform_allow:
     - nrf52dk/nrf52832
     - nrf52833dk/nrf52833
     - nrf52840dk/nrf52840
+    - npz2100dk/nrf52833
   integration_platforms:
     - nrf52833dk/nrf52833
+    - npz2100dk/nrf52833
   harness: console
   harness_config:
     type: multi_line
