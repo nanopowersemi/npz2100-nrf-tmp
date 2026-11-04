@@ -1,0 +1,23 @@
+sample:
+  name: nPZ2100 DK AS6212 sensor sample
+  description: AS6212 on the nPZ2100 DK polled by the nPZ2100, threshold wake-up and time-out
+common:
+  tags: npz2100
+  # The AS6212 is on the nPZ2100 DK, so this sample only runs there.
+  platform_allow:
+    - npz2100dk/nrf52833
+  integration_platforms:
+    - npz2100dk/nrf52833
+  harness: console
+  harness_config:
+    type: multi_line
+    ordered: true
+    regex:
+      - "nPZ2100 AS6212 sample boot"
+      - "Returning to idle"
+tests:
+  sample.npz2100.sensor_as6212: {}
+  # The same sample with MCUboot (single slot, serial recovery).
+  sample.npz2100.sensor_as6212.mcuboot:
+    extra_args:
+      - SB_CONF_FILE=sysbuild-mcuboot.conf

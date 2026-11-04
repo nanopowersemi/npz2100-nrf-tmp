@@ -18,6 +18,7 @@ npz2100_ncs/
 │   │   ├── npz2100.c            ← Platform-agnostic HAL primitives
 │   │   ├── npz2100_lib.c        ← Lib API (regmap, shadow, typed helpers)
 │   │   ├── npz2100_datalog.c    ← SRAM data-log extraction and parsing
+│   │   ├── npz2100_dump.c       ← Register dump (CONFIG_NPZ2100_DUMP)
 │   │   ├── npz2100_zephyr.c     ← Zephyr device-model wrapper
 │   │   ├── CMakeLists.txt
 │   │   └── Kconfig
@@ -38,6 +39,7 @@ npz2100_ncs/
 │       ├── npz2100_hal.h
 │       ├── npz2100_lib.h
 │       ├── npz2100_datalog.h    ← SRAM data-log extraction and parsing
+│       ├── npz2100_dump.h       ← Register dump
 │       ├── npz2100_regs_system.h
 │       ├── npz2100_regs_io.h
 │       ├── npz2100_regs_periph.h
@@ -55,6 +57,7 @@ npz2100_ncs/
     │   └── src/
     │       └── main.c
     ├── sensor_bmp280/           ← Same layout, BMP280 pressure threshold wake
+    ├── sensor_as6212/           ← nPZ2100 DK only: on-board AS6212, optional MCUboot
     ├── global_counter_alarm/    ← Same layout
     └── watchdog/                ← Same layout
 ```
@@ -277,6 +280,7 @@ All samples build for `npz2100dk/nrf52833`.
 | `watchdog` | Runs |
 | `sensor_bme280` | Needs an external BME280 on I²C0 (P0.11 SDA, P0.10 SCL) |
 | `sensor_bmp280` | Needs an external BMP280 on I²C0 (P0.11 SDA, P0.10 SCL) |
+| `sensor_as6212` | Runs; uses the on-board AS6212. Can be built with MCUboot for reflashing over the USB-UART (see its README) |
 
 The `npz2100` shield is still applied, as on every board. The DK's
 devicetree also labels I²C0 as `arduino_i2c`, so the shield overlay lands
@@ -372,6 +376,12 @@ The format is a flat byte stream of segments:
 [length] [start_addr] [data_0] ... [data_(length-2)]
 ```
 where `length = 1 (start_addr) + N (data bytes)`.
+
+The tool can also put the peripheral init commands in the regmap, as a
+segment that writes SRAM_BANK (0x7F) and runs on into the SRAM window
+(0x80-0xFF). `npz2100_apply_regmap()` writes those bytes after the
+registers, on every call, since the shadow does not mirror SRAM. Do not
+also write the same SRAM bytes with `npz2100_sram_write()`.
 
 ### Handle wake reasons
 
@@ -640,6 +650,10 @@ int npz2100_sram_read(dev, addr, data, len);
 int npz2100_enter_idle(dev);   // does not return - nPZ2100 cuts power
 int npz2100_soft_reset(dev);
 int npz2100_probe(dev);        // verify ID register = 0x74
+int npz2100_read_uuid(dev, uuid);  // 4-byte factory UUID (registers not in datasheet V0.8)
+
+/* Debug (CONFIG_NPZ2100_DUMP=y) */
+int npz2100_dump_registers(dev, flags);  // log all registers; NPZ2100_DUMP_STATUS / _SRAM
 ```
 
 All functions return `0` on success or a standard Zephyr `errno` on failure.
