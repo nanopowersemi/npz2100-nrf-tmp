@@ -97,10 +97,6 @@ jobs:
         if: ${{ !cancelled() && steps.bench.outcome == 'success' }}
         run: python -u scripts/ci/run_samples.py --sample global_counter_alarm
 
-      - name: Test sensor_tmp117
-        if: ${{ !cancelled() && steps.bench.outcome == 'success' }}
-        run: python -u scripts/ci/run_samples.py --sample sensor_tmp117
-
       - name: Test sensor_bme280
         if: ${{ !cancelled() && steps.bench.outcome == 'success' }}
         run: python -u scripts/ci/run_samples.py --sample sensor_bme280

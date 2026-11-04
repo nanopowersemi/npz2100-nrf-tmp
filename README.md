@@ -45,14 +45,13 @@ npz2100_ncs/
 ├── .github/workflows/samples.yml ← CI: twister builds + bench tests
 │
 └── samples/
-    ├── sensor_tmp117/           ← Reference application (open this in VS Code)
+    ├── sensor_bme280/           ← Reference application (open this in VS Code)
     │   ├── CMakeLists.txt
     │   ├── prj.conf
     │   ├── sample.yaml          ← Twister build/test metadata
     │   ├── ci/test.py           ← Bench test (see Continuous integration)
     │   └── src/
     │       └── main.c
-    ├── sensor_bme280/           ← Same layout, BME280 threshold wake
     ├── sensor_bmp280/           ← Same layout, BMP280 pressure threshold wake
     ├── global_counter_alarm/    ← Same layout
     └── watchdog/                ← Same layout
@@ -84,7 +83,7 @@ Extract this zip to a location of your choice. The result must be:
 <your-path>/npz2100_ncs/
 ├── npz2100_module/
 └── samples/
-    └── sensor_tmp117/
+    └── sensor_bme280/
 ```
 
 Keep this layout intact - the sample's `CMakeLists.txt` references the module via a relative path (`../../npz2100_module`).
@@ -94,7 +93,7 @@ Keep this layout intact - the sample's `CMakeLists.txt` references the module vi
 ### Step 2 - Open the sample in VS Code
 
 ```
-File → Open Folder → select npz2100_ncs/samples/sensor_tmp117/
+File → Open Folder → select npz2100_ncs/samples/sensor_bme280/
 ```
 
 VS Code will detect the nRF Connect application structure automatically.
@@ -111,7 +110,7 @@ In the **nRF Connect** sidebar panel:
 4. Leave all other settings at default
 5. Click **Build Configuration**
 
-The `CMakeLists.txt` in `samples/sensor_tmp117/` registers `npz2100_module/` via `ZEPHYR_EXTRA_MODULES` and selects the `npz2100` shield - no additional setup is required.
+The `CMakeLists.txt` in `samples/sensor_bme280/` registers `npz2100_module/` via `ZEPHYR_EXTRA_MODULES` and selects the `npz2100` shield - no additional setup is required.
 
 > **nPZero shield:** The nPZ2100 devicetree node and Kconfig defaults come from
 > the `npz2100` shield in `npz2100_module/boards/shields/npz2100/`, so samples
@@ -120,7 +119,7 @@ The `CMakeLists.txt` in `samples/sensor_tmp117/` registers `npz2100_module/` via
 > Arduino-header I²C bus (`arduino_i2c`). See **Supporting another board** below.
 >
 > From the terminal:
-> `west build -b nrf52833dk/nrf52833 samples/sensor_tmp117`
+> `west build -b nrf52833dk/nrf52833 samples/sensor_bme280`
 
 ---
 
@@ -247,7 +246,7 @@ add a `pinctrl` block to the shield's board overlay:
 ### Adding a new sample
 
 Create a folder under `samples/` and copy these lines from
-`sensor_tmp117/CMakeLists.txt`, before `find_package(Zephyr ...)`:
+`sensor_bme280/CMakeLists.txt`, before `find_package(Zephyr ...)`:
 
 ```cmake
 list(APPEND ZEPHYR_EXTRA_MODULES ${CMAKE_CURRENT_SOURCE_DIR}/../../npz2100_module)
